@@ -57,7 +57,7 @@
 			<string>PSGroupCell</string>
 			<key>footerText</key>
 			<string>1 — вертикальные слева, виджеты сбоку
-2 — в одну строку, виджеты снизу
+2 — компактные, виджеты сбоку
 3 — во всю ширину, виджеты снизу</string>
 			<key>label</key>
 			<string>Вариант часов</string>
@@ -80,7 +80,7 @@
 			<key>validTitles</key>
 			<array>
 				<string>1. Вертикальные слева, виджеты сбоку</string>
-				<string>2. В одну строку, виджеты снизу</string>
+				<string>2. Компактные, виджеты сбоку</string>
 				<string>3. Во всю ширину, виджеты снизу</string>
 			</array>
 			<key>validValues</key>
@@ -144,7 +144,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>70.0</real>
+			<real>110.0</real>
 			<key>defaults</key>
 			<string>com.coloros.clocktweak</string>
 			<key>key</key>
@@ -402,9 +402,9 @@
 			<key>defaults</key>
 			<string>com.coloros.clocktweak</string>
 			<key>key</key>
-			<string>widgetDate</string>
+			<string>widgetAlarm</string>
 			<key>label</key>
-			<string>Виджет «Дата»</string>
+			<string>Виджет «Будильник»</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -416,9 +416,37 @@
 			<key>defaults</key>
 			<string>com.coloros.clocktweak</string>
 			<key>key</key>
+			<string>widgetWeather</string>
+			<key>label</key>
+			<string>Виджет «Погода»</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
 			<string>widgetBattery</string>
 			<key>label</key>
 			<string>Виджет «Батарея»</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>widgetDate</string>
+			<key>label</key>
+			<string>Виджет «Дата»</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -457,6 +485,42 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Погода берётся с open-meteo.com по названию города (латиницей, например Moscow).</string>
+			<key>label</key>
+			<string>Погода</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>showWeather</string>
+			<key>label</key>
+			<string>Показывать погоду рядом с датой</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>Moscow</string>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>weatherCity</string>
+			<key>placeholder</key>
+			<string>Город</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Прозрачность виджетов, %</string>
 		</dict>
@@ -490,7 +554,7 @@
 			<key>cell</key>
 			<string>PSSliderCell</string>
 			<key>default</key>
-			<real>22.0</real>
+			<real>18.0</real>
 			<key>defaults</key>
 			<string>com.coloros.clocktweak</string>
 			<key>key</key>
