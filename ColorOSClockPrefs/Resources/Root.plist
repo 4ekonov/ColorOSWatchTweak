@@ -56,9 +56,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1 — растянутые, виджеты снизу
-2 — растянутые, виджеты сбоку
-3 — растянутые слева экрана</string>
+			<string>1 — вертикальные слева, виджеты сбоку
+2 — в одну строку, виджеты снизу
+3 — во всю ширину, виджеты снизу</string>
 			<key>label</key>
 			<string>Вариант часов</string>
 		</dict>
@@ -79,15 +79,57 @@
 			<string>Вариант</string>
 			<key>validTitles</key>
 			<array>
-				<string>1. Растянутые, виджеты снизу</string>
-				<string>2. Растянутые, виджеты сбоку</string>
-				<string>3. Растянутые слева экрана</string>
+				<string>1. Вертикальные слева, виджеты сбоку</string>
+				<string>2. В одну строку, виджеты снизу</string>
+				<string>3. Во всю ширину, виджеты снизу</string>
 			</array>
 			<key>validValues</key>
 			<array>
 				<integer>1</integer>
 				<integer>2</integer>
 				<integer>3</integer>
+			</array>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Цвет часов</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSLinkListCell</string>
+			<key>default</key>
+			<integer>1</integer>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>detail</key>
+			<string>PSListItemsController</string>
+			<key>key</key>
+			<string>clockColor</string>
+			<key>label</key>
+			<string>Цвет</string>
+			<key>validTitles</key>
+			<array>
+				<string>Белый</string>
+				<string>Лавандовый</string>
+				<string>Голубой</string>
+				<string>Бирюзовый</string>
+				<string>Сиреневый</string>
+				<string>Розовый</string>
+				<string>Персиковый</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+				<integer>2</integer>
+				<integer>3</integer>
+				<integer>4</integer>
+				<integer>5</integer>
+				<integer>6</integer>
 			</array>
 		</dict>
 		<dict>
