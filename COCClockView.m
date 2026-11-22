@@ -1,4 +1,3 @@
-#import <CoreText/CoreText.h>
 #import <objc/message.h>
 #import <dlfcn.h>
 #import "COCClockView.h"
@@ -6,7 +5,7 @@
 
 static NSString *const COCWeatherUpdated = @"COCWeatherUpdated";
 
-#pragma mark - Шрифты
+#pragma mark - Шрифт для виджетов
 
 static UIFont *COCRounded(CGFloat size, UIFontWeight weight) {
     UIFont *f = [UIFont systemFontOfSize:size weight:weight];
@@ -14,59 +13,131 @@ static UIFont *COCRounded(CGFloat size, UIFontWeight weight) {
     return d ? [UIFont fontWithDescriptor:d size:size] : f;
 }
 
-static CTFontRef COCDigitFont(void) {
-    static CTFontRef font = NULL;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSArray *names = @[ @"DINCondensed-Bold", @"AvenirNextCondensed-Heavy",
-                            @"HelveticaNeue-CondensedBold", @"ArialNarrow-Bold" ];
-        for (NSString *n in names) {
-            if ([UIFont fontWithName:n size:10]) {
-                font = CTFontCreateWithName((__bridge CFStringRef)n, 200, NULL);
-                break;
-            }
-        }
-        if (!font) font = CTFontCreateUIFontForLanguage(kCTFontUIFontEmphasizedSystem, 200, NULL);
-    });
-    return font;
+#pragma mark - Собственные цифры (векторные, ультра-узкие, как у ColorOS)
+//
+// Ячейка цифры 120 x 462 (y вниз), толщина штриха 38, зазор между цифрами 39.
+// Блок «0851» получается 597 x 462 — те же пропорции, что на референсе.
+//
+
+#define COC_W 120.0
+#define COC_H 462.0
+#define COC_T 38.0
+#define COC_G 39.0
+
+static void COCAddStroked(CGMutablePathRef out, UIBezierPath *p) {
+    CGPathRef s = CGPathCreateCopyByStrokingPath(p.CGPath, NULL, COC_T, kCGLineCapButt, kCGLineJoinMiter, 10);
+    CGPathAddPath(out, NULL, s);
+    CGPathRelease(s);
 }
 
-// Контур глифов строки (используем как маску для градиента — цвет не зависит от CoreText)
-static CGPathRef COCCreateLinePath(NSString *s) {
-    NSDictionary *attrs = @{ (__bridge id)kCTFontAttributeName: (__bridge id)COCDigitFont(),
-                             (__bridge id)kCTKernAttributeName: @(4) };
-    NSAttributedString *as = [[NSAttributedString alloc] initWithString:s attributes:attrs];
-    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)as);
-    CGMutablePathRef path = CGPathCreateMutable();
-    CFArrayRef runs = CTLineGetGlyphRuns(line);
-    for (CFIndex i = 0; i < CFArrayGetCount(runs); i++) {
-        CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(runs, i);
-        CFIndex cnt = CTRunGetGlyphCount(run);
-        if (cnt <= 0) continue;
-        CGGlyph glyphs[cnt];
-        CGPoint pos[cnt];
-        CTRunGetGlyphs(run, CFRangeMake(0, 0), glyphs);
-        CTRunGetPositions(run, CFRangeMake(0, 0), pos);
-        CTFontRef f = (CTFontRef)CFDictionaryGetValue(CTRunGetAttributes(run), kCTFontAttributeName);
-        for (CFIndex j = 0; j < cnt; j++) {
-            CGPathRef gp = CTFontCreatePathForGlyph(f, glyphs[j], NULL);
-            if (gp) {
-                CGAffineTransform t = CGAffineTransformMakeTranslation(pos[j].x, pos[j].y);
-                CGPathAddPath(path, &t, gp);
-                CGPathRelease(gp);
-            }
+static void COCAddPoly(CGMutablePathRef out, const CGPoint *pts, int n) {
+    CGPathMoveToPoint(out, NULL, pts[0].x, pts[0].y);
+    for (int i = 1; i < n; i++) CGPathAddLineToPoint(out, NULL, pts[i].x, pts[i].y);
+    CGPathCloseSubpath(out);
+}
+
+static CGPathRef COCCreateGlyph(unichar ch) {
+    const CGFloat W = COC_W, H = COC_H, C = COC_T / 2, R = 41, CX = 60;
+    CGMutablePathRef out = CGPathCreateMutable();
+
+    switch (ch) {
+        case '0': {
+            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, C, W - 2 * C, H - 2 * C)
+                                                         cornerRadius:R];
+            COCAddStroked(out, p);
+            break;
         }
+        case '1': {
+            CGPoint pts[] = { {88,0}, {88,H-34}, {120,H-34}, {120,H}, {0,H}, {0,H-34},
+                              {50,H-34}, {50,112}, {6,142}, {6,100}, {50,0} };
+            COCAddPoly(out, pts, 11);
+            break;
+        }
+        case '2': {
+            UIBezierPath *p = [UIBezierPath bezierPath];
+            [p moveToPoint:CGPointMake(C, 61)];
+            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:2 * M_PI clockwise:YES];
+            [p addCurveToPoint:CGPointMake(C, 380) controlPoint1:CGPointMake(101, 175) controlPoint2:CGPointMake(C, 265)];
+            [p addLineToPoint:CGPointMake(C, H - C)];
+            [p addLineToPoint:CGPointMake(101, H - C)];
+            COCAddStroked(out, p);
+            break;
+        }
+        case '3': {
+            UIBezierPath *p = [UIBezierPath bezierPath];
+            [p moveToPoint:CGPointMake(C, 61)];
+            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:2 * M_PI clockwise:YES];
+            [p addLineToPoint:CGPointMake(101, 190)];
+            [p addArcWithCenter:CGPointMake(CX, 190) radius:R startAngle:0 endAngle:M_PI_2 clockwise:YES];
+            [p addLineToPoint:CGPointMake(36, 231)];
+            [p moveToPoint:CGPointMake(36, 231)];
+            [p addLineToPoint:CGPointMake(60, 231)];
+            [p addArcWithCenter:CGPointMake(CX, 272) radius:R startAngle:-M_PI_2 endAngle:0 clockwise:YES];
+            [p addLineToPoint:CGPointMake(101, 401)];
+            [p addArcWithCenter:CGPointMake(CX, 401) radius:R startAngle:0 endAngle:M_PI clockwise:YES];
+            COCAddStroked(out, p);
+            break;
+        }
+        case '4': {
+            // внешний контур по часовой, отверстие — против (nonzero-заливка)
+            CGPoint outer[] = { {70,0}, {108,0}, {108,300}, {120,300}, {120,338}, {108,338},
+                                {108,H}, {70,H}, {70,338}, {0,338}, {0,296} };
+            CGPoint hole[] = { {70,186}, {43,300}, {70,300} };
+            COCAddPoly(out, outer, 11);
+            COCAddPoly(out, hole, 3);
+            break;
+        }
+        case '5': {
+            UIBezierPath *p = [UIBezierPath bezierPath];
+            [p moveToPoint:CGPointMake(101, C)];
+            [p addLineToPoint:CGPointMake(C, C)];
+            [p addLineToPoint:CGPointMake(C, 250)];
+            [p moveToPoint:CGPointMake(C, 231)];
+            [p addLineToPoint:CGPointMake(60, 231)];
+            [p addArcWithCenter:CGPointMake(CX, 272) radius:R startAngle:-M_PI_2 endAngle:0 clockwise:YES];
+            [p addLineToPoint:CGPointMake(101, 401)];
+            [p addArcWithCenter:CGPointMake(CX, 401) radius:R startAngle:0 endAngle:M_PI clockwise:YES];
+            COCAddStroked(out, p);
+            break;
+        }
+        case '6':
+        case '9': {
+            UIBezierPath *p = [UIBezierPath bezierPath];
+            [p moveToPoint:CGPointMake(C, 241)];
+            [p addLineToPoint:CGPointMake(C, 61)];
+            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:1.5 * M_PI clockwise:YES];
+            [p addLineToPoint:CGPointMake(101, C + 1)];
+            [p appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, 200, W - 2 * C, H - C - 200)
+                                                     cornerRadius:R]];
+            if (ch == '9') [p applyTransform:CGAffineTransformMake(-1, 0, 0, -1, W, H)];
+            COCAddStroked(out, p);
+            break;
+        }
+        case '7': {
+            CGPoint pts[] = { {0,0}, {120,0}, {120,44}, {72,H}, {28,H}, {78,38}, {0,38} };
+            COCAddPoly(out, pts, 7);
+            break;
+        }
+        case '8': {
+            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, C, W - 2 * C, 198)
+                                                         cornerRadius:R];
+            [p appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, 217, W - 2 * C, H - C - 217)
+                                                     cornerRadius:R]];
+            COCAddStroked(out, p);
+            break;
+        }
+        default: break;
     }
-    CFRelease(line);
-    return path;
+    return out;
 }
 
-#pragma mark - Цифры (ультра-узкие, градиент как в ColorOS)
+#pragma mark - Вид с цифрами
 
 @interface COCDigitsView : UIView
 @property (nonatomic, copy) NSArray<NSString *> *lines;   // "0851" или "08","51"
-@property (nonatomic, strong) UIColor *color;
-@property (nonatomic, assign) CGFloat gapRatio;
+@property (nonatomic, strong) UIColor *hourColor;         // левая часть (чуть светлее)
+@property (nonatomic, strong) UIColor *minuteColor;       // правая часть
+@property (nonatomic, assign) CGFloat gapRatio;           // зазор между строками / высота
 @end
 
 @implementation COCDigitsView
@@ -76,7 +147,8 @@ static CGPathRef COCCreateLinePath(NSString *s) {
         self.backgroundColor = [UIColor clearColor];
         self.opaque = NO;
         self.contentMode = UIViewContentModeRedraw;
-        _color = [UIColor colorWithRed:1 green:1 blue:1 alpha:1];
+        _hourColor = [UIColor colorWithRed:1 green:1 blue:1 alpha:1];
+        _minuteColor = _hourColor;
         _gapRatio = 0.03;
     }
     return self;
@@ -88,10 +160,8 @@ static CGPathRef COCCreateLinePath(NSString *s) {
     [self setNeedsDisplay];
 }
 
-- (void)setColor:(UIColor *)color {
-    _color = color;
-    [self setNeedsDisplay];
-}
+- (void)setHourColor:(UIColor *)c { _hourColor = c; [self setNeedsDisplay]; }
+- (void)setMinuteColor:(UIColor *)c { _minuteColor = c; [self setNeedsDisplay]; }
 
 - (void)drawRect:(CGRect)rect {
     NSUInteger n = self.lines.count;
@@ -102,35 +172,34 @@ static CGPathRef COCCreateLinePath(NSString *s) {
     CGFloat gap = (n > 1) ? B.size.height * self.gapRatio : 0;
     CGFloat lineH = (B.size.height - gap * (n - 1)) / n;
 
-    CGFloat r = 1, g = 1, bl = 1, a = 1;
-    [self.color getRed:&r green:&g blue:&bl alpha:&a];
-    // Сверху полупрозрачнее, к низу ярче — как на цифрах ColorOS
-    CGFloat comps[8] = { r, g, bl, 0.55 * a,  r, g, bl, a };
-    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGGradientRef grad = CGGradientCreateWithColorComponents(cs, comps, NULL, 2);
-
     for (NSUInteger i = 0; i < n; i++) {
+        NSString *s = self.lines[i];
+        NSUInteger m = s.length;
+        if (m == 0) continue;
         CGRect lr = CGRectMake(0, i * (lineH + gap), B.size.width, lineH);
-        CGPathRef path = COCCreateLinePath(self.lines[i]);
-        CGRect b = CGPathGetBoundingBox(path);
-        if (b.size.width > 0 && b.size.height > 0) {
+        CGFloat totalW = m * COC_W + (m - 1) * COC_G;
+
+        CGContextSaveGState(ctx);
+        CGContextTranslateCTM(ctx, lr.origin.x, lr.origin.y);
+        CGContextScaleCTM(ctx, lr.size.width / totalW, lr.size.height / COC_H);
+
+        for (NSUInteger j = 0; j < m; j++) {
+            // Однострочный вариант: первые две цифры — часы, остальные — минуты.
+            // Двухстрочный: верхняя строка — часы, нижняя — минуты.
+            BOOL isHour = (n > 1) ? (i == 0) : (j < m / 2);
+            UIColor *col = isHour ? self.hourColor : self.minuteColor;
+
+            CGPathRef gp = COCCreateGlyph([s characterAtIndex:j]);
             CGContextSaveGState(ctx);
-            CGContextTranslateCTM(ctx, lr.origin.x, lr.origin.y + lr.size.height);
-            CGContextScaleCTM(ctx, 1, -1);
-            CGContextScaleCTM(ctx, lr.size.width / b.size.width, lr.size.height / b.size.height);
-            CGContextTranslateCTM(ctx, -b.origin.x, -b.origin.y);
-            CGContextAddPath(ctx, path);
-            CGContextClip(ctx);
-            CGContextDrawLinearGradient(ctx, grad,
-                                        CGPointMake(0, CGRectGetMaxY(b)),
-                                        CGPointMake(0, CGRectGetMinY(b)),
-                                        kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+            CGContextTranslateCTM(ctx, j * (COC_W + COC_G), 0);
+            CGContextSetFillColorWithColor(ctx, col.CGColor);
+            CGContextAddPath(ctx, gp);
+            CGContextFillPath(ctx);
             CGContextRestoreGState(ctx);
+            CGPathRelease(gp);
         }
-        CGPathRelease(path);
+        CGContextRestoreGState(ctx);
     }
-    CGGradientRelease(grad);
-    CGColorSpaceRelease(cs);
 }
 
 @end
@@ -340,17 +409,84 @@ typedef NS_ENUM(NSInteger, COCWidgetType) {
     COCWidgetText,
 };
 
-static UIColor *COCPaletteColor(NSInteger idx) {
-    // Пастельная палитра как в «Clock & color» у ColorOS
-    switch (idx) {
-        case 1: return [UIColor colorWithRed:0.88 green:0.86 blue:1.00 alpha:1];  // лавандовый
-        case 2: return [UIColor colorWithRed:0.78 green:0.86 blue:1.00 alpha:1];  // голубой
-        case 3: return [UIColor colorWithRed:0.75 green:0.92 blue:1.00 alpha:1];  // бирюзовый
-        case 4: return [UIColor colorWithRed:0.91 green:0.80 blue:1.00 alpha:1];  // сиреневый
-        case 5: return [UIColor colorWithRed:1.00 green:0.79 blue:0.76 alpha:1];  // розовый
-        case 6: return [UIColor colorWithRed:1.00 green:0.89 blue:0.77 alpha:1];  // персиковый
-        default: return [UIColor colorWithRed:1 green:1 blue:1 alpha:1];          // белый
+static UIColor *COCRGB(CGFloat r, CGFloat g, CGFloat b) {
+    return [UIColor colorWithRed:r green:g blue:b alpha:1];
+}
+
+static UIColor *COCMixWhite(UIColor *c, CGFloat k) {
+    CGFloat r = 1, g = 1, b = 1, a = 1;
+    [c getRed:&r green:&g blue:&b alpha:&a];
+    return COCRGB(r + (1 - r) * k, g + (1 - g) * k, b + (1 - b) * k);
+}
+
+// Средний цвет обоев экрана блокировки (приватный API SpringBoard; может быть недоступен)
+static UIColor *COCWallpaperAverage(void) {
+    static UIColor *cached = nil;
+    static NSDate *when = nil;
+    if (when && -[when timeIntervalSinceNow] < 20) return cached;
+    UIColor *c = nil;
+    @try {
+        Class k = NSClassFromString(@"SBWallpaperController");
+        SEL sh = NSSelectorFromString(@"sharedInstance");
+        if (k && [k respondsToSelector:sh]) {
+            id inst = ((id (*)(id, SEL))objc_msgSend)(k, sh);
+            SEL av = NSSelectorFromString(@"averageColorForVariant:");
+            if (inst && [inst respondsToSelector:av]) {
+                id r = ((id (*)(id, SEL, long long))objc_msgSend)(inst, av, 0);   // 0 = экран блокировки
+                if ([r isKindOfClass:[UIColor class]]) c = r;
+            }
+        }
+    } @catch (NSException *e) {
+        c = nil;
     }
+    cached = c;
+    when = [NSDate date];
+    return c;
+}
+
+// Плоские цвета без градиентов: hour — левая часть (чуть светлее), minute — правая.
+// Индексы: 0 — как на референсе 1, 1 — светлый как на референсе 2, 2..7 — пастель, 8 — под обои.
+static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **minute) {
+    UIColor *h = nil, *m = nil;
+    switch (idx) {
+        case 0:
+            h = COCRGB(0.76, 0.65, 0.66);
+            m = COCRGB(0.67, 0.58, 0.63);
+            break;
+        case 1:
+            h = COCRGB(0.98, 0.97, 0.96);
+            m = COCRGB(0.90, 0.89, 0.88);
+            break;
+        case 2: m = COCRGB(0.82, 0.79, 0.97); break;   // лавандовый
+        case 3: m = COCRGB(0.70, 0.80, 0.97); break;   // голубой
+        case 4: m = COCRGB(0.66, 0.86, 0.96); break;   // бирюзовый
+        case 5: m = COCRGB(0.84, 0.70, 0.97); break;   // сиреневый
+        case 6: m = COCRGB(0.97, 0.70, 0.68); break;   // розовый
+        case 7: m = COCRGB(0.97, 0.82, 0.68); break;   // персиковый
+        case 8: {
+            UIColor *w = COCWallpaperAverage();
+            CGFloat hu = 0, sa = 0, br = 0, al = 1;
+            if (w && [w getHue:&hu saturation:&sa brightness:&br alpha:&al]) {
+                BOOL lightWall = br > 0.78;
+                CGFloat sat = MIN(sa * 0.9, 0.34);
+                m = [UIColor colorWithHue:hu saturation:sat brightness:(lightWall ? 0.28 : 0.86) alpha:1];
+                h = [UIColor colorWithHue:hu saturation:MAX(sat - 0.08, 0)
+                               brightness:(lightWall ? 0.20 : 0.96) alpha:1];
+            } else {
+                h = COCRGB(0.76, 0.65, 0.66);
+                m = COCRGB(0.67, 0.58, 0.63);
+            }
+            break;
+        }
+        default:
+            h = COCRGB(0.76, 0.65, 0.66);
+            m = COCRGB(0.67, 0.58, 0.63);
+            break;
+    }
+    if (!h) h = COCMixWhite(m, 0.16);
+    if (!duo) h = m;
+    *hour = h;
+    *minute = m;
 }
 
 @implementation COCClockView {
@@ -361,6 +497,7 @@ static UIColor *COCPaletteColor(NSInteger idx) {
     NSTimer *_timer;
     NSDateFormatter *_fmt;
     UIColor *_tint;
+    BOOL _duo;
 
     // Кэш настроек
     BOOL _enabled, _use24, _wEn, _wAlarm, _wWeather, _wBat, _wDate, _wTxt, _showWeather;
@@ -413,10 +550,22 @@ static UIColor *COCPaletteColor(NSInteger idx) {
     [_timer invalidate];
     _timer = nil;
     if (self.window) {
+        if (_colorIdx == 8) {            // обои могли смениться
+            [self updateColors];
+            [self refreshContent];
+        }
         _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(tick)
                                                 userInfo:nil repeats:YES];
         [self refreshContent];
     }
+}
+
+- (void)updateColors {
+    UIColor *h = nil, *m = nil;
+    COCClockColors(_colorIdx, _duo, &h, &m);
+    _digits.hourColor = h;
+    _digits.minuteColor = m;
+    _tint = h;
 }
 
 - (void)tick { [self refreshContent]; }
@@ -428,7 +577,8 @@ static UIColor *COCPaletteColor(NSInteger idx) {
     _enabled  = COCB(@"enabled", YES);
     _style    = (NSInteger)COCF(@"layout", 1);
     _use24    = COCB(@"use24h", YES);
-    _colorIdx = (NSInteger)COCF(@"clockColor", 1);
+    _colorIdx = (NSInteger)COCF(@"clockColor", 0);
+    _duo      = COCB(@"duoTone", YES);
 
     _pT = COCF(@"padTop", 110);
     _pL = COCF(@"padLeft", 24);
@@ -459,8 +609,7 @@ static UIColor *COCPaletteColor(NSInteger idx) {
 
     self.hidden = !_enabled;
 
-    _tint = COCPaletteColor(_colorIdx);
-    _digits.color = _tint;
+    [self updateColors];
 
     // Перестраиваем виджеты (порядок: будильник, погода, батарея, дата, заметка)
     for (COCWidgetCard *c in _cards) [c removeFromSuperview];
