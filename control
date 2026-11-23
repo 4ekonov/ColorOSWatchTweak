@@ -1,7 +1,7 @@
 Package: com.coloros.clocktweak
 Name: ColorOS Clock
 Depends: mobilesubstrate, preferenceloader, firmware (>= 15.0)
-Version: 0.4.0
+Version: 0.6.0
 Architecture: iphoneos-arm
 Description: ColorOS-style lock screen clock with widgets and notification offsets
 Maintainer: you

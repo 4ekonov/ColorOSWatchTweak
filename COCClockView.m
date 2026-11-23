@@ -13,131 +13,255 @@ static UIFont *COCRounded(CGFloat size, UIFontWeight weight) {
     return d ? [UIFont fontWithDescriptor:d size:size] : f;
 }
 
-#pragma mark - Собственные цифры (векторные, ультра-узкие, как у ColorOS)
+#pragma mark - Собственные цифры (оригинальный набор ColorOS, трассировка с листа 0–9)
 //
-// Ячейка цифры 120 x 462 (y вниз), толщина штриха 38, зазор между цифрами 39.
-// Блок «0851» получается 597 x 462 — те же пропорции, что на референсе.
+// Нативные размеры: чаша цифры 68 x 472 (y вниз), шаг между цифрами 91.
+// «4», «2», «7» чуть выступают за ячейку, поэтому вид с цифрами имеет поля COC_PADX / COC_PADY.
+// Таблицы ниже сгенерированы из листа цифр скриптом vectorize.py — вручную не править.
+//
+// Растяжение по горизонтали относительно нативных пропорций (1.0 = как на листе):
+//   COC_STRETCH_FULL    — «во всю ширину» и вертикальные цифры слева
+//   COC_STRETCH_COMPACT — компактный вариант с виджетами сбоку, чуть шире
 //
 
-#define COC_W 120.0
-#define COC_H 462.0
-#define COC_T 38.0
-#define COC_G 39.0
+#define COC_BW 68.0
+#define COC_CH 472.0
+#define COC_PITCH 91.0
+#define COC_LINEGAP 14.0
+#define COC_PADX 10.0
+#define COC_PADY 1.0
 
-static void COCAddStroked(CGMutablePathRef out, UIBezierPath *p) {
-    CGPathRef s = CGPathCreateCopyByStrokingPath(p.CGPath, NULL, COC_T, kCGLineCapButt, kCGLineJoinMiter, 10);
-    CGPathAddPath(out, NULL, s);
-    CGPathRelease(s);
-}
+#define COC_STRETCH_FULL 1.43
+#define COC_STRETCH_COMPACT 1.60
 
-static void COCAddPoly(CGMutablePathRef out, const CGPoint *pts, int n) {
-    CGPathMoveToPoint(out, NULL, pts[0].x, pts[0].y);
-    for (int i = 1; i < n; i++) CGPathAddLineToPoint(out, NULL, pts[i].x, pts[i].y);
-    CGPathCloseSubpath(out);
-}
+typedef struct { float x, y; } COCPt;
 
-static CGPathRef COCCreateGlyph(unichar ch) {
-    const CGFloat W = COC_W, H = COC_H, C = COC_T / 2, R = 41, CX = 60;
-    CGMutablePathRef out = CGPathCreateMutable();
+// AUTO-GENERATED (vectorize.py + gen_tables.py) — не править вручную
 
+static const COCPt kG0_0[] = {
+    {42.6,470.91}, {33.6,471.66}, {25.6,470.96}, {21.6,469.93}, {18.6,468.84}, {14.6,466.89}, {11.6,464.9}, {8.6,462.2},
+    {6.32,459.7}, {4.22,456.7}, {2.19,452.7}, {0.38,446.7}, {-0.19,439.7}, {-0.2,32.7}, {0.11,26.7}, {0.38,24.7},
+    {1.43,20.7}, {2.19,18.7}, {4.22,14.7}, {7.18,10.7}, {11.6,6.5}, {16.6,3.43}, {21.6,1.47}, {26.6,0.28},
+    {33.6,-0.26}, {41.6,0.31}, {46.6,1.55}, {51.6,3.57}, {54.6,5.27}, {57.6,7.49}, {60.82,10.7}, {63.04,13.7},
+    {64.84,16.7}, {67.04,22.7}, {67.85,26.7}, {68.11,30.7}, {68.3,438.7}, {68.11,443.7}, {67.91,445.7}, {66.98,449.7},
+    {65.94,452.7}, {63.9,456.7}, {61.77,459.7}, {60.02,461.7}, {56.6,464.76}, {51.6,467.88}, {46.6,469.87}
+};
+static const COCPt kG0_1[] = {
+    {35.67,448.7}, {38.6,447.85}, {40.15,446.7}, {41.9,444.7}, {43.07,441.7}, {43.46,437.7}, {43.46,34.7}, {43.32,31.7},
+    {42.83,28.7}, {41.9,26.7}, {41.11,25.7}, {38.6,23.53}, {35.6,22.65}, {33.6,22.5}, {29.6,23.45}, {27.97,24.7},
+    {26.6,26.22}, {25.27,28.7}, {24.58,33.7}, {24.57,436.7}, {24.64,438.7}, {25.27,442.7}, {26.22,444.7}, {27.6,446.33},
+    {29.6,447.93}, {30.6,448.24}, {33.6,448.88}
+};
+static const COCPt kG1_0[] = {
+    {66.6,467.32}, {2.6,467.46}, {1.6,467.32}, {0.91,466.7}, {0.63,465.7}, {0.63,446.7}, {0.66,445.7}, {1.06,444.7},
+    {1.6,444.24}, {2.6,444.16}, {22.6,444.16}, {23.07,443.7}, {23.11,442.7}, {23.11,28.7}, {22.6,27.54}, {4.6,27.54},
+    {3.6,27.47}, {2.42,26.7}, {2.23,25.7}, {2.24,5.7}, {2.84,4.7}, {3.6,4.22}, {45.6,4.19}, {46.6,4.24},
+    {47.24,4.7}, {47.83,5.7}, {47.86,442.7}, {47.92,443.7}, {48.6,444.16}, {65.6,444.16}, {66.6,444.24}, {67.15,444.7},
+    {67.57,445.7}, {67.6,446.7}, {67.6,465.7}, {67.3,466.7}
+};
+static const COCPt kG2_0[] = {
+    {74.6,468.97}, {73.6,469.42}, {72.6,469.46}, {6.6,469.46}, {4.6,469.1}, {4.23,468.7}, {4.09,467.7}, {4.26,446.7},
+    {4.89,443.7}, {5.32,439.7}, {6.87,430.7}, {9.29,413.7}, {9.92,410.7}, {12.33,393.7}, {13.88,384.7}, {18.28,354.7},
+    {18.91,351.7}, {23.31,321.7}, {23.94,318.7}, {27.27,295.7}, {27.9,292.7}, {32.3,262.7}, {32.93,259.7}, {35.35,242.7},
+    {35.82,240.7}, {37.33,229.7}, {39.94,213.7}, {42.91,189.7}, {43.81,176.7}, {44,168.7}, {44.01,35.7}, {43.66,32.7},
+    {43.07,30.7}, {42.05,28.7}, {39.6,26.28}, {37.6,25.35}, {35.6,25.12}, {32.6,25.19}, {31.6,25.33}, {29.6,26.23},
+    {27.6,27.98}, {26.3,29.7}, {25.27,32.7}, {25.07,36.7}, {24.95,199.7}, {24.6,200.09}, {23.6,200.52}, {22.6,200.57},
+    {1.6,200.52}, {0.26,199.7}, {0.14,198.7}, {0.22,31.7}, {1.16,25.7}, {2.35,21.7}, {4.26,17.7}, {6.26,14.7},
+    {8.6,12.06}, {12.6,8.44}, {17.6,5.55}, {23.6,3.36}, {28.6,2.36}, {34.6,2.11}, {41.6,2.53}, {45.6,3.38},
+    {48.6,4.35}, {54.6,7.26}, {58.6,10.23}, {62.73,14.7}, {65.79,19.7}, {67,22.7}, {67.89,25.7}, {68.79,31.7},
+    {68.92,34.7}, {68.92,166.7}, {68.74,175.7}, {67.92,188.7}, {65.91,203.7}, {28.3,445.7}, {28.6,446}, {29.6,446.16},
+    {73.6,446.18}, {74.56,446.7}, {75.03,447.7}, {75.04,467.7}, {74.86,468.7}
+};
+static const COCPt kG3_0[] = {
+    {42.6,470.98}, {34.6,471.66}, {26.6,471.07}, {22.6,470.12}, {19.6,469.11}, {13.6,466.08}, {10.6,463.78}, {8.38,461.7},
+    {5.21,457.7}, {3.43,454.7}, {1.18,448.7}, {0.37,444.7}, {0.1,440.7}, {0.08,302.7}, {0.09,301.7}, {0.6,300.8},
+    {1.6,300.28}, {23.6,300.3}, {24.97,301.7}, {25.15,440.7}, {26.11,443.7}, {27.3,445.7}, {28.6,446.98}, {30.6,448.12},
+    {34.6,448.71}, {38.6,447.92}, {41.31,445.7}, {42.7,443.7}, {43.09,442.7}, {43.9,438.7}, {43.86,259.7}, {43.04,255.7},
+    {42.11,253.7}, {40.6,251.56}, {37.6,249.36}, {33.6,248.3}, {16.6,248.06}, {16.23,247.7}, {15.93,245.7}, {15.93,223.7},
+    {15.97,222.7}, {16.48,221.7}, {17.6,221.3}, {33.6,221.22}, {35.6,220.95}, {37.6,220.18}, {39.6,219.04}, {41.73,216.7},
+    {43.08,213.7}, {43.86,209.7}, {43.92,33.7}, {43.75,31.7}, {43.01,28.7}, {41.98,26.7}, {39.6,24.34}, {37.6,23.4},
+    {35.6,23.14}, {32.6,23.17}, {31.6,23.28}, {29.6,24.17}, {27.6,25.82}, {26.21,27.7}, {25.42,29.7}, {25.09,31.7},
+    {24.92,170.7}, {23.6,171.88}, {22.6,171.94}, {1.6,171.92}, {0.6,171.35}, {0.12,170.7}, {0.08,169.7}, {0.08,32.7},
+    {0.43,26.7}, {1.25,22.7}, {2.23,19.7}, {4.17,15.7}, {5.43,13.7}, {7.6,11.03}, {9.87,8.7}, {12.6,6.35},
+    {17.6,3.45}, {23.6,1.31}, {28.6,0.34}, {32.6,0.14}, {39.6,0.29}, {45.6,1.44}, {48.6,2.42}, {52.6,4.23},
+    {54.6,5.32}, {58.6,8.32}, {61.86,11.7}, {64,14.7}, {66.07,18.7}, {66.9,20.7}, {67.98,24.7}, {68.78,32.7},
+    {68.69,207.7}, {67.91,214.7}, {66.84,218.7}, {65.05,222.7}, {63.88,224.7}, {60.6,228.55}, {58.29,230.7}, {56.6,232.09},
+    {52.14,234.7}, {53.6,235.95}, {54.6,236.35}, {57.6,238.39}, {59.1,239.7}, {62.03,242.7}, {64.08,245.7}, {66.92,251.7},
+    {67.97,255.7}, {68.65,261.7}, {68.71,440.7}, {68.03,446.7}, {66.99,450.7}, {64.81,455.7}, {62.06,459.7}, {57.6,464.2},
+    {53.6,467.02}, {49.6,468.93}, {46.6,469.98}
+};
+static const COCPt kG4_0[] = {
+    {58.6,469.32}, {37.6,469.37}, {36.6,469.33}, {35.43,468.7}, {35.17,466.7}, {35.17,394.7}, {34.6,394.13}, {-6.4,394.13},
+    {-7.4,394.04}, {-8.42,392.7}, {-8.48,370.7}, {-7.7,359.7}, {-5.08,327.7}, {-1.65,280.7}, {-1.1,275.7}, {-0.66,267.7},
+    {-0.1,262.7}, {0.33,254.7}, {2.88,223.7}, {3.32,215.7}, {5.86,184.7}, {6.3,176.7}, {6.86,171.7}, {8.29,150.7},
+    {10.91,118.7}, {11.28,111.7}, {12.91,92.7}, {15.34,58.7}, {15.89,53.7}, {16.33,45.7}, {16.89,40.7}, {19.32,6.7},
+    {19.55,4.7}, {20.06,3.7}, {20.6,3.25}, {58.6,3.22}, {59.33,3.7}, {59.93,4.7}, {59.95,369.7}, {60.6,370.64},
+    {74.6,370.64}, {75.6,370.8}, {76.71,371.7}, {76.88,372.7}, {76.88,391.7}, {76.83,392.7}, {75.6,394.07}, {60.6,394.13},
+    {59.95,394.7}, {59.94,467.7}, {59.6,468.7}
+};
+static const COCPt kG4_1[] = {
+    {35.97,369.7}, {37.51,68.7}, {37.6,46.2}, {15.11,369.7}, {15.6,370.64}, {16.6,370.64}, {34.6,370.64}, {35.6,370.4}
+};
+static const COCPt kG5_0[] = {
+    {43.6,468.61}, {35.6,469.35}, {27.6,468.82}, {22.6,467.63}, {17.6,465.66}, {15.6,464.59}, {12.6,462.59}, {9.6,459.88},
+    {7.34,457.4}, {5.24,454.4}, {3.21,450.4}, {2.5,448.4}, {1.43,444.4}, {1.13,442.4}, {0.8,435.4}, {0.8,312.4},
+    {0.87,311.4}, {1.45,310.4}, {2.6,310.04}, {23.6,310.04}, {24.6,310.19}, {25.5,311.4}, {25.6,434.4}, {26.35,440.4},
+    {27.29,442.4}, {28.1,443.4}, {29.6,444.84}, {30.6,445.43}, {31.6,445.87}, {34.6,446.4}, {38.6,445.85}, {40.6,444.8},
+    {42.81,442.4}, {44.04,439.4}, {44.46,434.4}, {44.45,207.4}, {43.94,202.4}, {43.06,200.4}, {41.6,198.43}, {39.6,196.9},
+    {37.6,196.07}, {34.6,195.89}, {32.6,196.07}, {30.6,196.88}, {28.6,198.1}, {27.35,199.4}, {26.16,201.4}, {25.46,203.4},
+    {25.14,205.4}, {25.12,239.4}, {24.6,240.66}, {23.6,240.95}, {2.6,240.96}, {1.6,240.9}, {0.94,240.4}, {0.46,239.4},
+    {0.44,4.4}, {0.47,3.4}, {1.02,2.4}, {1.6,1.95}, {67.6,1.89}, {68.6,1.94}, {69.21,2.4}, {69.77,3.4},
+    {69.8,23.4}, {69.49,24.4}, {68.6,25.12}, {26.6,25.24}, {25.6,25.29}, {25.12,26.4}, {25.12,177.4}, {25.6,178.51},
+    {27.6,177.05}, {29.6,175.95}, {33.6,174.24}, {37.6,173.26}, {40.6,172.94}, {44.6,172.94}, {47.6,173.24}, {51.6,174.13},
+    {54.6,175.32}, {56.6,176.4}, {59.36,178.4}, {61.6,180.6}, {63.83,183.4}, {64.99,185.4}, {66.75,189.4}, {67.94,193.4},
+    {68.79,198.4}, {69.05,201.4}, {69.3,435.4}, {69.01,442.4}, {67.94,447.4}, {65.95,452.4}, {64.82,454.4}, {60.95,459.4},
+    {58.6,461.64}, {55.6,463.84}, {52.6,465.54}, {47.6,467.55}
+};
+static const COCPt kG6_0[] = {
+    {42.6,470.65}, {34.6,471.35}, {26.6,470.8}, {22.6,469.85}, {19.6,468.83}, {16.6,467.51}, {13.6,465.82}, {10.6,463.61},
+    {7.33,460.4}, {4.36,456.4}, {3.23,454.4}, {1.23,449.4}, {0.3,445.4}, {-0.07,439.4}, {-0.08,33.4}, {0.12,27.4},
+    {0.36,25.4}, {1.32,21.4}, {3.37,16.4}, {5.21,13.4}, {9.6,8.36}, {13.6,5.21}, {15.6,4.04}, {19.6,2.24},
+    {22.6,1.23}, {27.6,0.14}, {31.6,-0.15}, {39.6,0.01}, {45.6,1.23}, {48.6,2.24}, {52.6,4.03}, {54.6,5.21},
+    {58.6,8.36}, {62.97,13.4}, {64.77,16.4}, {65.66,18.4}, {66.79,21.4}, {67.92,26.4}, {68.19,31.4}, {68.2,171.4},
+    {68.03,172.4}, {67.6,172.84}, {66.6,173.03}, {45.6,173.04}, {44.6,172.94}, {43.98,172.4}, {43.67,171.4}, {43.66,34.4},
+    {43.08,29.4}, {42.8,28.4}, {41.74,26.4}, {39.6,24.19}, {37.6,23.18}, {36.6,22.94}, {31.6,22.95}, {30.6,23.22},
+    {28.6,24.31}, {27.35,25.4}, {26.6,26.49}, {25.2,29.4}, {24.78,33.4}, {24.76,203.4}, {25.6,204.2}, {27.6,203},
+    {31.6,201.15}, {35.6,200.04}, {41.6,199.65}, {46.6,199.92}, {48.6,200.27}, {51.6,201.11}, {55.6,203}, {58.6,205.11},
+    {60.91,207.4}, {63.07,210.4}, {64.76,213.4}, {66.91,219.4}, {67.85,224.4}, {68.09,227.4}, {68.42,438.4}, {68,445.4},
+    {66.77,450.4}, {65.07,454.4}, {63.99,456.4}, {61.9,459.4}, {59.6,461.9}, {56.6,464.59}, {51.6,467.64}, {46.6,469.61}
+};
+static const COCPt kG6_1[] = {
+    {38.65,447.4}, {40.13,446.4}, {41.96,444.4}, {42.93,442.4}, {43.65,437.4}, {43.64,233.4}, {42.95,228.4}, {42,226.4},
+    {41.19,225.4}, {39.6,223.91}, {38.6,223.3}, {37.6,222.94}, {34.6,222.59}, {30.6,223.12}, {28.6,224.26}, {27.34,225.4},
+    {26.07,227.4}, {25.19,229.4}, {24.76,234.4}, {24.77,437.4}, {25.41,442.4}, {26.35,444.4}, {28.6,446.81}, {30.6,447.87},
+    {33.6,448.4}, {37.6,447.88}
+};
+static const COCPt kG7_0[] = {
+    {32.6,466.53}, {31.6,467.1}, {30.6,467.16}, {9.6,467.13}, {8.6,466.82}, {8.21,466.4}, {8.12,465.4}, {46.17,28.4},
+    {45.6,27.24}, {-5.4,27.12}, {-6.32,26.4}, {-6.62,25.4}, {-6.62,10.4}, {-6.59,5.4}, {-6.01,4.4}, {-5.4,3.94},
+    {69.6,3.9}, {70.61,4.4}, {71.07,5.4}, {71.09,24.4}, {70.89,28.4}, {68.29,56.4}, {67.94,62.4}, {66.29,79.4},
+    {64.9,97.4}, {64.3,102.4}, {62.91,120.4}, {62.3,125.4}, {61.87,132.4}, {59.27,160.4}, {58.92,166.4}, {58.31,171.4},
+    {57.88,178.4}, {56.32,194.4}, {52.94,235.4}, {52.33,240.4}, {51.9,247.4}, {51.29,252.4}, {49.9,270.4}, {49.3,275.4},
+    {46.87,305.4}, {44.27,333.4}, {43.92,339.4}, {41.32,367.4}, {40.88,374.4}, {38.28,402.4}, {35.85,432.4}, {35.33,436.4},
+    {33.86,455.4}, {33.34,459.4}, {32.98,465.4}
+};
+static const COCPt kG8_0[] = {
+    {42.6,470.61}, {33.6,471.36}, {25.6,470.66}, {21.6,469.63}, {18.6,468.54}, {14.6,466.59}, {11.6,464.6}, {8.6,461.9},
+    {6.32,459.4}, {4.22,456.4}, {2.19,452.4}, {0.38,446.4}, {-0.19,439.4}, {-0.2,264.4}, {0.14,257.4}, {1.52,251.4},
+    {2.23,249.4}, {4.32,245.4}, {8.6,240.24}, {12.6,236.97}, {15.32,235.4}, {16.52,234.4}, {13.6,232.75}, {10.6,230.67},
+    {7.6,227.9}, {5.5,225.4}, {4.18,223.4}, {2.19,219.4}, {1.15,216.4}, {0.13,211.4}, {-0.2,204.4}, {-0.2,33.4},
+    {0.14,26.4}, {1.22,21.4}, {3.26,16.4}, {4.43,14.4}, {7.46,10.4}, {9.6,8.21}, {13.6,5.13}, {19.6,2.18},
+    {22.6,1.19}, {27.6,0.12}, {31.6,-0.15}, {39.6,0.02}, {45.6,1.27}, {50.6,3.07}, {52.6,4.05}, {55.6,5.95},
+    {58.6,8.36}, {63,13.4}, {65.79,18.4}, {66.9,21.4}, {67.85,25.4}, {68.28,31.4}, {68.3,204.4}, {68.03,211.4},
+    {67.03,216.4}, {66.02,219.4}, {62.88,225.4}, {60.6,228.06}, {57.6,230.84}, {51.88,234.4}, {52.99,235.4}, {54.6,236.24},
+    {58.6,239.19}, {60.84,241.4}, {63.93,245.4}, {65.97,249.4}, {66.99,252.4}, {68.01,257.4}, {68.3,264.4}, {68.3,438.4},
+    {68.11,443.4}, {67.91,445.4}, {66.98,449.4}, {65.94,452.4}, {63.9,456.4}, {61.77,459.4}, {60.02,461.4}, {56.6,464.46},
+    {51.6,467.58}, {46.6,469.57}
+};
+static const COCPt kG8_1[] = {
+    {37.74,220.4}, {40.6,218.58}, {42.11,216.4}, {42.99,214.4}, {43.45,210.4}, {43.46,34.4}, {43.02,29.4}, {42.14,27.4},
+    {40.86,25.4}, {39.6,24.3}, {37.6,23.23}, {36.6,22.96}, {33.6,22.8}, {30.6,23.17}, {28.6,24.19}, {27.26,25.4},
+    {25.42,28.4}, {24.6,33.4}, {24.59,210.4}, {25.47,215.4}, {27.31,218.4}, {28.6,219.5}, {30.6,220.56}, {31.6,220.84},
+    {35.6,220.92}
+};
+static const COCPt kG8_2[] = {
+    {33.85,448.4}, {37.6,447.85}, {39.6,446.8}, {40.6,445.89}, {41.86,444.4}, {42.82,442.4}, {43.41,438.4}, {43.46,259.4},
+    {42.94,254.4}, {42.05,252.4}, {40.6,250.55}, {38.6,248.95}, {36.6,248.17}, {33.6,247.93}, {31.6,248.13}, {29.6,248.92},
+    {27.59,250.4}, {26.1,252.4}, {25.18,254.4}, {24.6,258.4}, {24.57,436.4}, {24.63,438.4}, {25.29,442.4}, {26.25,444.4},
+    {28.05,446.4}, {29.6,447.5}, {30.6,447.89}
+};
+static const COCPt kG9_0[] = {
+    {42.6,470.59}, {33.6,471.36}, {25.6,470.68}, {21.6,469.67}, {18.6,468.57}, {14.6,466.62}, {11.6,464.61}, {8.6,461.89},
+    {6.35,459.4}, {4.27,456.4}, {2.25,452.4}, {1.21,449.4}, {0.29,445.4}, {-0.07,439.4}, {-0.08,300.4}, {-0.04,299.4},
+    {0.6,298.19}, {2.6,297.96}, {22.6,297.96}, {23.6,298.12}, {24.35,299.4}, {24.45,438.4}, {25.19,442.4}, {26.16,444.4},
+    {26.98,445.4}, {29.6,447.59}, {33.6,448.4}, {37.6,447.84}, {40,446.4}, {41.71,444.4}, {42.63,442.4}, {42.99,441.4},
+    {43.21,439.4}, {43.29,267.4}, {42.6,266.84}, {39.6,268.65}, {34.6,270.57}, {28.6,271.57}, {26.6,271.65}, {23.6,271.47},
+    {18.6,270.69}, {15.6,269.71}, {11.6,267.66}, {8.88,265.4}, {6.12,262.4}, {4.17,259.4}, {3.17,257.4}, {2.31,255.4},
+    {1.15,251.4}, {0.21,246.4}, {-0.03,241.4}, {-0.37,33.4}, {0.17,25.4}, {1.44,20.4}, {2.21,18.4}, {4.3,14.4},
+    {7.32,10.4}, {10.6,7.27}, {13.6,5.07}, {19.6,2.14}, {22.6,1.15}, {26.6,0.3}, {31.6,-0.15}, {39.6,0.04},
+    {44.6,1.02}, {47.6,1.98}, {52.6,4.19}, {55.6,6.06}, {57.21,7.4}, {59.6,9.62}, {62.87,13.4}, {65.6,18.42},
+    {66.75,21.4}, {67.91,26.4}, {68.19,31.4}, {68.2,438.4}, {68.05,443.4}, {66.88,449.4}, {65.82,452.4}, {63.77,456.4},
+    {59.93,461.4}, {57.6,463.61}, {54.6,465.82}, {51.6,467.5}, {46.6,469.51}
+};
+static const COCPt kG9_1[] = {
+    {36.27,248.4}, {38.6,247.51}, {39.6,246.82}, {41.76,244.4}, {43.02,241.4}, {43.26,238.4}, {43.3,33.4}, {42.92,29.4},
+    {42.07,27.4}, {40.68,25.4}, {39.48,24.4}, {37.6,23.32}, {36.6,22.98}, {33.6,22.79}, {30.6,23.12}, {28.6,24.11},
+    {27.17,25.4}, {26.33,26.4}, {25.29,28.4}, {24.41,33.4}, {24.4,237.4}, {24.53,239.4}, {25.4,243.4}, {26.54,245.4},
+    {27.6,246.65}, {29.6,247.91}, {31.6,248.62}, {34.6,248.76}
+};
+
+typedef struct { const COCPt *v; int n; } COCRing;
+static const COCRing kR0[] = { {kG0_0,47}, {kG0_1,27} };
+static const COCRing kR1[] = { {kG1_0,36} };
+static const COCRing kR2[] = { {kG2_0,85} };
+static const COCRing kR3[] = { {kG3_0,123} };
+static const COCRing kR4[] = { {kG4_0,51}, {kG4_1,8} };
+static const COCRing kR5[] = { {kG5_0,100} };
+static const COCRing kR6[] = { {kG6_0,88}, {kG6_1,26} };
+static const COCRing kR7[] = { {kG7_0,51} };
+static const COCRing kR8[] = { {kG8_0,82}, {kG8_1,25}, {kG8_2,27} };
+static const COCRing kR9[] = { {kG9_0,85}, {kG9_1,28} };
+
+static const COCRing *COCRingsFor(unichar ch, int *count) {
     switch (ch) {
-        case '0': {
-            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, C, W - 2 * C, H - 2 * C)
-                                                         cornerRadius:R];
-            COCAddStroked(out, p);
-            break;
-        }
-        case '1': {
-            CGPoint pts[] = { {88,0}, {88,H-34}, {120,H-34}, {120,H}, {0,H}, {0,H-34},
-                              {50,H-34}, {50,112}, {6,142}, {6,100}, {50,0} };
-            COCAddPoly(out, pts, 11);
-            break;
-        }
-        case '2': {
-            UIBezierPath *p = [UIBezierPath bezierPath];
-            [p moveToPoint:CGPointMake(C, 61)];
-            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:2 * M_PI clockwise:YES];
-            [p addCurveToPoint:CGPointMake(C, 380) controlPoint1:CGPointMake(101, 175) controlPoint2:CGPointMake(C, 265)];
-            [p addLineToPoint:CGPointMake(C, H - C)];
-            [p addLineToPoint:CGPointMake(101, H - C)];
-            COCAddStroked(out, p);
-            break;
-        }
-        case '3': {
-            UIBezierPath *p = [UIBezierPath bezierPath];
-            [p moveToPoint:CGPointMake(C, 61)];
-            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:2 * M_PI clockwise:YES];
-            [p addLineToPoint:CGPointMake(101, 190)];
-            [p addArcWithCenter:CGPointMake(CX, 190) radius:R startAngle:0 endAngle:M_PI_2 clockwise:YES];
-            [p addLineToPoint:CGPointMake(36, 231)];
-            [p moveToPoint:CGPointMake(36, 231)];
-            [p addLineToPoint:CGPointMake(60, 231)];
-            [p addArcWithCenter:CGPointMake(CX, 272) radius:R startAngle:-M_PI_2 endAngle:0 clockwise:YES];
-            [p addLineToPoint:CGPointMake(101, 401)];
-            [p addArcWithCenter:CGPointMake(CX, 401) radius:R startAngle:0 endAngle:M_PI clockwise:YES];
-            COCAddStroked(out, p);
-            break;
-        }
-        case '4': {
-            // внешний контур по часовой, отверстие — против (nonzero-заливка)
-            CGPoint outer[] = { {70,0}, {108,0}, {108,300}, {120,300}, {120,338}, {108,338},
-                                {108,H}, {70,H}, {70,338}, {0,338}, {0,296} };
-            CGPoint hole[] = { {70,186}, {43,300}, {70,300} };
-            COCAddPoly(out, outer, 11);
-            COCAddPoly(out, hole, 3);
-            break;
-        }
-        case '5': {
-            UIBezierPath *p = [UIBezierPath bezierPath];
-            [p moveToPoint:CGPointMake(101, C)];
-            [p addLineToPoint:CGPointMake(C, C)];
-            [p addLineToPoint:CGPointMake(C, 250)];
-            [p moveToPoint:CGPointMake(C, 231)];
-            [p addLineToPoint:CGPointMake(60, 231)];
-            [p addArcWithCenter:CGPointMake(CX, 272) radius:R startAngle:-M_PI_2 endAngle:0 clockwise:YES];
-            [p addLineToPoint:CGPointMake(101, 401)];
-            [p addArcWithCenter:CGPointMake(CX, 401) radius:R startAngle:0 endAngle:M_PI clockwise:YES];
-            COCAddStroked(out, p);
-            break;
-        }
-        case '6':
-        case '9': {
-            UIBezierPath *p = [UIBezierPath bezierPath];
-            [p moveToPoint:CGPointMake(C, 241)];
-            [p addLineToPoint:CGPointMake(C, 61)];
-            [p addArcWithCenter:CGPointMake(CX, 61) radius:R startAngle:M_PI endAngle:1.5 * M_PI clockwise:YES];
-            [p addLineToPoint:CGPointMake(101, C + 1)];
-            [p appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, 200, W - 2 * C, H - C - 200)
-                                                     cornerRadius:R]];
-            if (ch == '9') [p applyTransform:CGAffineTransformMake(-1, 0, 0, -1, W, H)];
-            COCAddStroked(out, p);
-            break;
-        }
-        case '7': {
-            CGPoint pts[] = { {0,0}, {120,0}, {120,44}, {72,H}, {28,H}, {78,38}, {0,38} };
-            COCAddPoly(out, pts, 7);
-            break;
-        }
-        case '8': {
-            UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, C, W - 2 * C, 198)
-                                                         cornerRadius:R];
-            [p appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(C, 217, W - 2 * C, H - C - 217)
-                                                     cornerRadius:R]];
-            COCAddStroked(out, p);
-            break;
-        }
-        default: break;
+        case '0': *count = 2; return kR0;
+        case '1': *count = 1; return kR1;
+        case '2': *count = 1; return kR2;
+        case '3': *count = 1; return kR3;
+        case '4': *count = 2; return kR4;
+        case '5': *count = 1; return kR5;
+        case '6': *count = 2; return kR6;
+        case '7': *count = 1; return kR7;
+        case '8': *count = 3; return kR8;
+        case '9': *count = 2; return kR9;
+        default: *count = 0; return NULL;
     }
-    return out;
+}
+
+static inline CGFloat COCBlockW(NSUInteger m) { return (m - 1) * COC_PITCH + COC_BW; }
+static inline CGFloat COCBlockH(NSUInteger n) { return n * COC_CH + (n - 1) * COC_LINEGAP; }
+
+// Отношение высота/ширина блока из m цифр в n строк при растяжении stretch.
+static inline CGFloat COCAspect(NSUInteger m, NSUInteger n, CGFloat stretch) {
+    return COCBlockH(n) / (COCBlockW(m) * stretch);
+}
+
+// Рамка вида = блок цифр плюс поля под выступающие части глифов.
+static CGRect COCOutsetFrame(CGRect block, NSUInteger m, NSUInteger n) {
+    CGFloat px = COC_PADX * block.size.width / COCBlockW(m);
+    CGFloat py = COC_PADY * block.size.height / COCBlockH(n);
+    return CGRectInset(block, -px, -py);
+}
+
+static void COCAddRing(CGMutablePathRef p, const COCPt *v, int n) {
+    if (n < 3) return;
+    CGPathMoveToPoint(p, NULL, v[0].x, v[0].y);
+    for (int i = 1; i < n; i++) CGPathAddLineToPoint(p, NULL, v[i].x, v[i].y);
+    CGPathCloseSubpath(p);
+}
+
+static CGPathRef COCGlyphPath(unichar ch) {
+    static CGPathRef cache[10];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        for (int d = 0; d < 10; d++) {
+            int cnt = 0;
+            const COCRing *rings = COCRingsFor((unichar)('0' + d), &cnt);
+            CGMutablePathRef p = CGPathCreateMutable();
+            for (int i = 0; i < cnt; i++) COCAddRing(p, rings[i].v, rings[i].n);
+            cache[d] = p;
+        }
+    });
+    return (ch >= '0' && ch <= '9') ? cache[ch - '0'] : NULL;
 }
 
 #pragma mark - Вид с цифрами
 
 @interface COCDigitsView : UIView
 @property (nonatomic, copy) NSArray<NSString *> *lines;   // "0851" или "08","51"
-@property (nonatomic, strong) UIColor *hourColor;         // левая часть (чуть светлее)
-@property (nonatomic, strong) UIColor *minuteColor;       // правая часть
-@property (nonatomic, assign) CGFloat gapRatio;           // зазор между строками / высота
+@property (nonatomic, strong) UIColor *hourColor;         // часы (ярче)
+@property (nonatomic, strong) UIColor *minuteColor;       // минуты
+@property (nonatomic, assign) CGFloat outlineAlpha;       // 0 — без контура
 @end
 
 @implementation COCDigitsView
@@ -147,9 +271,9 @@ static CGPathRef COCCreateGlyph(unichar ch) {
         self.backgroundColor = [UIColor clearColor];
         self.opaque = NO;
         self.contentMode = UIViewContentModeRedraw;
-        _hourColor = [UIColor colorWithRed:1 green:1 blue:1 alpha:1];
+        _hourColor = [UIColor whiteColor];
         _minuteColor = _hourColor;
-        _gapRatio = 0.03;
+        _outlineAlpha = 0.38;
     }
     return self;
 }
@@ -162,43 +286,59 @@ static CGPathRef COCCreateGlyph(unichar ch) {
 
 - (void)setHourColor:(UIColor *)c { _hourColor = c; [self setNeedsDisplay]; }
 - (void)setMinuteColor:(UIColor *)c { _minuteColor = c; [self setNeedsDisplay]; }
+- (void)setOutlineAlpha:(CGFloat)a { _outlineAlpha = a; [self setNeedsDisplay]; }
 
 - (void)drawRect:(CGRect)rect {
     NSUInteger n = self.lines.count;
     if (n == 0) return;
+    NSUInteger m = self.lines[0].length;
+    if (m == 0) return;
 
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGRect B = self.bounds;
-    CGFloat gap = (n > 1) ? B.size.height * self.gapRatio : 0;
-    CGFloat lineH = (B.size.height - gap * (n - 1)) / n;
+
+    // Нативные единицы -> точки вида (вместе с полями)
+    CGFloat sx = B.size.width / (COCBlockW(m) + 2 * COC_PADX);
+    CGFloat sy = B.size.height / (COCBlockH(n) + 2 * COC_PADY);
+    UIColor *rim = [UIColor colorWithWhite:1 alpha:self.outlineAlpha];
+    CGFloat lw = MAX(0.9, COC_CH * sy * 0.0030);
 
     for (NSUInteger i = 0; i < n; i++) {
         NSString *s = self.lines[i];
-        NSUInteger m = s.length;
-        if (m == 0) continue;
-        CGRect lr = CGRectMake(0, i * (lineH + gap), B.size.width, lineH);
-        CGFloat totalW = m * COC_W + (m - 1) * COC_G;
+        CGFloat y0 = (COC_PADY + i * (COC_CH + COC_LINEGAP)) * sy;
 
-        CGContextSaveGState(ctx);
-        CGContextTranslateCTM(ctx, lr.origin.x, lr.origin.y);
-        CGContextScaleCTM(ctx, lr.size.width / totalW, lr.size.height / COC_H);
+        for (NSUInteger j = 0; j < s.length; j++) {
+            CGPathRef gp = COCGlyphPath([s characterAtIndex:j]);
+            if (!gp) continue;
 
-        for (NSUInteger j = 0; j < m; j++) {
             // Однострочный вариант: первые две цифры — часы, остальные — минуты.
             // Двухстрочный: верхняя строка — часы, нижняя — минуты.
-            BOOL isHour = (n > 1) ? (i == 0) : (j < m / 2);
+            BOOL isHour = (n > 1) ? (i == 0) : (j < s.length / 2);
             UIColor *col = isHour ? self.hourColor : self.minuteColor;
 
-            CGPathRef gp = COCCreateGlyph([s characterAtIndex:j]);
-            CGContextSaveGState(ctx);
-            CGContextTranslateCTM(ctx, j * (COC_W + COC_G), 0);
+            // Контур переводим в координаты вида: толщина обводки не зависит от растяжения
+            CGFloat x0 = (COC_PADX + j * COC_PITCH) * sx;
+            CGAffineTransform t = CGAffineTransformMake(sx, 0, 0, sy, x0, y0);
+            CGPathRef vp = CGPathCreateCopyByTransformingPath(gp, &t);
+
             CGContextSetFillColorWithColor(ctx, col.CGColor);
-            CGContextAddPath(ctx, gp);
-            CGContextFillPath(ctx);
-            CGContextRestoreGState(ctx);
-            CGPathRelease(gp);
+            CGContextAddPath(ctx, vp);
+            CGContextEOFillPath(ctx);
+
+            if (self.outlineAlpha > 0.001) {
+                // Едва заметный светлый контур строго внутри цифры: клип по контуру + обводка 2×
+                CGContextSaveGState(ctx);
+                CGContextAddPath(ctx, vp);
+                CGContextEOClip(ctx);
+                CGContextAddPath(ctx, vp);
+                CGContextSetLineWidth(ctx, lw * 2);
+                CGContextSetLineJoin(ctx, kCGLineJoinRound);
+                CGContextSetStrokeColorWithColor(ctx, rim.CGColor);
+                CGContextStrokePath(ctx);
+                CGContextRestoreGState(ctx);
+            }
+            CGPathRelease(vp);
         }
-        CGContextRestoreGState(ctx);
     }
 }
 
@@ -497,7 +637,8 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     NSTimer *_timer;
     NSDateFormatter *_fmt;
     UIColor *_tint;
-    BOOL _duo;
+    BOOL _duo, _outline;
+    CGFloat _boost;
 
     // Кэш настроек
     BOOL _enabled, _use24, _wEn, _wAlarm, _wWeather, _wBat, _wDate, _wTxt, _showWeather;
@@ -563,8 +704,17 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 - (void)updateColors {
     UIColor *h = nil, *m = nil;
     COCClockColors(_colorIdx, _duo, &h, &m);
+    if (_duo) {
+        // Часы ярче и плотнее минут: часы светлеют, минуты становятся чуть прозрачнее
+        CGFloat b = MAX(0, MIN(100, _boost)) / 100.0;
+        h = COCMixWhite(h, 0.35 * b);
+        CGFloat r = 1, g = 1, bl = 1, a = 1;
+        [m getRed:&r green:&g blue:&bl alpha:&a];
+        m = [UIColor colorWithRed:r green:g blue:bl alpha:1.0 - 0.55 * b];
+    }
     _digits.hourColor = h;
     _digits.minuteColor = m;
+    _digits.outlineAlpha = _outline ? 0.38 : 0;
     _tint = h;
 }
 
@@ -579,6 +729,8 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     _use24    = COCB(@"use24h", YES);
     _colorIdx = (NSInteger)COCF(@"clockColor", 0);
     _duo      = COCB(@"duoTone", YES);
+    _boost    = COCF(@"hourBoost", 50);
+    _outline  = COCB(@"digitOutline", YES);
 
     _pT = COCF(@"padTop", 110);
     _pL = COCF(@"padLeft", 24);
@@ -765,25 +917,24 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
         CGFloat rowH = MAX(ds.height, wsz.height);
         _dateL.frame = CGRectMake(R.origin.x, R.origin.y, ds.width, ds.height);
         _weatherL.frame = CGRectMake(CGRectGetMaxX(R) - wsz.width, R.origin.y, wsz.width, wsz.height);
-        dr = CGRectMake(R.origin.x, R.origin.y + rowH + 14, u * sx, u * 0.774 * sy);
+        dr = CGRectMake(R.origin.x, R.origin.y + rowH + 14, u * sx, u * COCAspect(4, 1, COC_STRETCH_FULL) * sy);
     } else {
         if (_style == 1) {
             // Вариант 1: вертикальные цифры слева (08 над 51)
             CGFloat bw = u * 0.36;
-            CGFloat bh = bw * 1.9 * 2.06;
-            _digits.gapRatio = 0.03;
+            CGFloat bh = bw * COCAspect(2, 2, COC_STRETCH_FULL);
             dr = CGRectMake(R.origin.x, R.origin.y, bw * sx, bh * sy);
         } else {
             // Вариант 2: компактное 0851 (~68% ширины)
             CGFloat bw = u * 0.68;
-            dr = CGRectMake(R.origin.x, R.origin.y, bw * sx, bw * 1.04 * sy);
+            dr = CGRectMake(R.origin.x, R.origin.y, bw * sx, bw * COCAspect(4, 1, COC_STRETCH_COMPACT) * sy);
         }
         // Дата тремя строками под цифрами
         CGSize ds = [_dateL sizeThatFits:CGSizeMake(MAX(u * 0.5, 80), CGFLOAT_MAX)];
         _dateL.frame = CGRectMake(R.origin.x, CGRectGetMaxY(dr) + 12, ds.width, ds.height);
     }
 
-    _digits.frame = dr;
+    _digits.frame = COCOutsetFrame(dr, (_style == 1) ? 2 : 4, (_style == 1) ? 2 : 1);
     _digits.alpha = _op / 100.0;
     _dateL.alpha = _op / 100.0;
     _weatherL.alpha = _op / 100.0;

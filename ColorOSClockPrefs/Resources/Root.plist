@@ -150,7 +150,47 @@
 			<key>key</key>
 			<string>duoTone</string>
 			<key>label</key>
-			<string>Часы чуть светлее минут</string>
+			<string>Часы ярче минут</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>digitOutline</string>
+			<key>label</key>
+			<string>Тонкий контур цифр</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>0 — одинаково, 100 — минуты заметно прозрачнее часов (как на референсе).</string>
+			<key>label</key>
+			<string>Разница яркости часов и минут, %</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>50.0</real>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>hourBoost</string>
+			<key>max</key>
+			<real>100.0</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>
