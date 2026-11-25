@@ -942,6 +942,209 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
 @end
 
 
+@interface COCClockView (Gesture) <UIGestureRecognizerDelegate>
+@end
+
+#pragma mark - Редактор размера и положения (долгое нажатие на экране блокировки)
+
+@interface COCClockView (Editor)
+- (CGRect)editorFrame;              // рамка цифр в развёрнутом виде
+- (CGRect)editorDragFrame;          // цифры + дата: за что можно тянуть
+- (void)editorSnapshot;             // запомнить значения перед жестом
+- (void)editorMoveBy:(CGPoint)d;
+- (void)editorResizeCorner:(CGPoint)corner lockRatio:(BOOL)lock;
+- (void)editorReset;
+- (void)endEditingSave:(BOOL)save;
+@end
+
+@interface COCEditorView : UIView <UIGestureRecognizerDelegate>
+- (instancetype)initWithClock:(COCClockView *)clock;
+- (void)refresh;
+@end
+
+@implementation COCEditorView {
+    __weak COCClockView *_clock;
+    UIView *_frameV;
+    UIView *_gripV;
+    UIButton *_done, *_cancel, *_reset, *_ratio;
+    UILabel *_title, *_hint;
+    UIPanGestureRecognizer *_pan;
+    int _mode;                  // 0 — нет, 1 — перенос, 2 — размер
+    CGPoint _startCorner;
+    BOOL _keepRatio;
+}
+
+static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+    [b setTitle:title forState:UIControlStateNormal];
+    [b setTitleColor:fg forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    b.backgroundColor = bg;
+    b.contentEdgeInsets = UIEdgeInsetsMake(8, 16, 8, 16);
+    b.layer.cornerRadius = 18;
+    [b sizeToFit];
+    CGRect f = b.frame;
+    f.size.height = 36;
+    b.frame = f;
+    return b;
+}
+
+- (instancetype)initWithClock:(COCClockView *)clock {
+    if ((self = [super initWithFrame:CGRectZero])) {
+        _clock = clock;
+        _keepRatio = YES;
+        self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
+        self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+
+        _frameV = [[UIView alloc] init];
+        _frameV.userInteractionEnabled = NO;
+        _frameV.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        _frameV.layer.cornerRadius = 26;
+        _frameV.layer.borderWidth = 1.5;
+        _frameV.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.85].CGColor;
+        if (@available(iOS 13.0, *)) _frameV.layer.cornerCurve = kCACornerCurveContinuous;
+        [self addSubview:_frameV];
+
+        // Уголок для изменения размера — дуга в правом нижнем углу рамки
+        _gripV = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
+        _gripV.userInteractionEnabled = NO;
+        CAShapeLayer *arc = [CAShapeLayer layer];
+        UIBezierPath *bp = [UIBezierPath bezierPathWithArcCenter:CGPointMake(8, 8) radius:22
+                                                      startAngle:0 endAngle:M_PI_2 clockwise:YES];
+        arc.path = bp.CGPath;
+        arc.fillColor = NULL;
+        arc.strokeColor = [UIColor whiteColor].CGColor;
+        arc.lineWidth = 5;
+        arc.lineCap = kCALineCapRound;
+        [_gripV.layer addSublayer:arc];
+        [self addSubview:_gripV];
+
+        UIColor *dark = [UIColor colorWithWhite:0.12 alpha:0.62];
+        UIColor *gold = [UIColor colorWithRed:0.86 green:0.69 blue:0.26 alpha:1];
+        _cancel = COCPill(@"Отмена", dark, [UIColor whiteColor]);
+        _done = COCPill(@"Готово", gold, [UIColor blackColor]);
+        _reset = COCPill(@"Сбросить", dark, [UIColor whiteColor]);
+        _ratio = COCPill(@"Пропорции: вкл", dark, [UIColor whiteColor]);
+        [_cancel addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
+        [_done addTarget:self action:@selector(onDone) forControlEvents:UIControlEventTouchUpInside];
+        [_reset addTarget:self action:@selector(onReset) forControlEvents:UIControlEventTouchUpInside];
+        [_ratio addTarget:self action:@selector(onRatio) forControlEvents:UIControlEventTouchUpInside];
+        for (UIButton *b in @[ _cancel, _done, _reset, _ratio ]) [self addSubview:b];
+
+        _title = [[UILabel alloc] init];
+        _title.text = @"Экран блокировки";
+        _title.textColor = [UIColor whiteColor];
+        _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+        [_title sizeToFit];
+        [self addSubview:_title];
+
+        _hint = [[UILabel alloc] init];
+        _hint.text = @"Тяни рамку — положение, уголок — размер";
+        _hint.textColor = [UIColor colorWithWhite:1 alpha:0.85];
+        _hint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        _hint.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:_hint];
+
+        _pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
+        _pan.delegate = self;
+        _pan.maximumNumberOfTouches = 1;
+        [self addGestureRecognizer:_pan];
+    }
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
+    CGFloat top = MAX(self.safeAreaInsets.top, 20) + 6;
+    _cancel.frame = CGRectMake(16, top, _cancel.bounds.size.width, 36);
+    _done.frame = CGRectMake(W - 16 - _done.bounds.size.width, top, _done.bounds.size.width, 36);
+    _title.center = CGPointMake(W / 2, top + 18);
+
+    CGFloat by = H - 190;
+    CGFloat gap = 10;
+    CGFloat total = _reset.bounds.size.width + gap + _ratio.bounds.size.width;
+    _reset.frame = CGRectMake((W - total) / 2, by, _reset.bounds.size.width, 36);
+    _ratio.frame = CGRectMake(CGRectGetMaxX(_reset.frame) + gap, by, _ratio.bounds.size.width, 36);
+    _hint.frame = CGRectMake(16, by - 30, W - 32, 20);
+    [self refresh];
+}
+
+// Рамку и уголок ставим по текущей раскладке часов
+- (void)refresh {
+    COCClockView *c = _clock;
+    if (!c) return;
+    [c layoutIfNeeded];
+    CGRect f = CGRectInset([c editorFrame], -12, -12);
+    _frameV.frame = f;
+    _gripV.frame = CGRectMake(CGRectGetMaxX(f) - 36, CGRectGetMaxY(f) - 36, 40, 40);
+}
+
+- (CGPoint)gripCenter {
+    return CGPointMake(CGRectGetMaxX(_frameV.frame) - 14, CGRectGetMaxY(_frameV.frame) - 14);
+}
+
+- (void)onCancel { [_clock endEditingSave:NO]; }
+- (void)onDone { [_clock endEditingSave:YES]; }
+- (void)onReset { [_clock editorReset]; [self refresh]; }
+- (void)onRatio {
+    _keepRatio = !_keepRatio;
+    [_ratio setTitle:_keepRatio ? @"Пропорции: вкл" : @"Пропорции: выкл" forState:UIControlStateNormal];
+    [_ratio sizeToFit];
+    CGRect r = _ratio.frame; r.size.height = 36; _ratio.frame = r;
+    [self setNeedsLayout];
+}
+
+#pragma mark Жесты
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (g != _pan) return [super gestureRecognizerShouldBegin:g];
+    COCClockView *c = _clock;
+    if (!c) return NO;
+    CGPoint p = [_pan locationInView:self];
+    CGPoint t = [_pan translationInView:self];
+    CGPoint s = CGPointMake(p.x - t.x, p.y - t.y);          // где палец лёг
+    CGPoint gc = [self gripCenter];
+    if (hypot(s.x - gc.x, s.y - gc.y) < 44) { _mode = 2; return YES; }
+    if (CGRectContainsPoint(CGRectInset([c editorDragFrame], -16, -16), s)) { _mode = 1; return YES; }
+    _mode = 0;
+    return NO;
+}
+
+// Пока тянем рамку, системные жесты (свайпы страниц) ждут — иначе экран уезжает из-под пальца
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)o {
+    return g == _pan && o != _pan;
+}
+
+- (void)onPan:(UIPanGestureRecognizer *)g {
+    COCClockView *c = _clock;
+    if (!c) return;
+    CGPoint t = [g translationInView:self];
+    switch (g.state) {
+        case UIGestureRecognizerStateBegan:
+            [c editorSnapshot];
+            _startCorner = CGPointMake(CGRectGetMaxX([c editorFrame]), CGRectGetMaxY([c editorFrame]));
+            break;
+        case UIGestureRecognizerStateChanged:
+            if (_mode == 1) [c editorMoveBy:t];
+            else if (_mode == 2) [c editorResizeCorner:CGPointMake(_startCorner.x + t.x, _startCorner.y + t.y)
+                                            lockRatio:_keepRatio];
+            [self refresh];
+            break;
+        default:
+            _mode = 0;
+            break;
+    }
+}
+
+// Касания вне наших элементов тоже ловим — под редактором ничего не должно нажиматься
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *v = [super hitTest:point withEvent:event];
+    return v ?: self;
+}
+
+@end
+
 @implementation COCClockView {
     COCDigitsView *_hoursV;
     COCDigitsView *_minsV;
@@ -964,7 +1167,7 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     CGFloat _wOp, _wRad, _wScale;
     NSString *_txt, *_city;
     BOOL _cEnabled, _cForce, _debug;
-    CGFloat _cSize, _cSpeed, _cDist;
+    CGFloat _cSpeed, _cDist;
 
     // Раскладки «развёрнуто» / «свёрнуто» и состояние анимации
     COCLayoutOut _E, _C;
@@ -978,6 +1181,14 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     NSString *_src;
     NSMutableArray<UIView *> *_cells;      // кэш ячеек при сканировании всего окна
     CFTimeInterval _lastScan;
+
+    // Редактор размера и положения
+    BOOL _editing;
+    COCEditorView *_editor;
+    __weak UILongPressGestureRecognizer *_lp;
+    CGFloat _sess[5];        // size, width, height, offsetX, offsetY на момент входа в редактор
+    CGFloat _snap[5];        // то же перед текущим жестом
+    CGRect _snapFrame;
 }
 
 + (void)registerListView:(UIView *)view {
@@ -1023,6 +1234,8 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_timer invalidate];
     [_link invalidate];
+    UILongPressGestureRecognizer *lp = _lp;
+    [lp.view removeGestureRecognizer:lp];
 }
 
 // Часы не перехватывают касания: свайпы, камера, фонарик работают как обычно.
@@ -1032,6 +1245,7 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
+    if (!self.window && _editing) [self endEditingSave:NO];
     [_timer invalidate];
     _timer = nil;
     if (self.window) {
@@ -1083,12 +1297,15 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     _pB = COCF(@"padBottom", 0);
     _pR = COCF(@"padRight", 24);
 
-    _size = COCF(@"size", 100);
-    _w    = COCF(@"width", 100);
-    _h    = COCF(@"height", 100);
+    // Размер и положение задаются на экране блокировки (долгое нажатие); во время правки не трогаем
+    if (!_editing) {
+        _size = COCF(@"size", 100);
+        _w    = COCF(@"width", 100);
+        _h    = COCF(@"height", 100);
+        _ox   = COCF(@"offsetX", 0);
+        _oy   = COCF(@"offsetY", 0);
+    }
     _op   = COCF(@"clockOpacity", 100);
-    _ox   = COCF(@"offsetX", 0);
-    _oy   = COCF(@"offsetY", 0);
 
     _wEn      = COCB(@"widgetsEnabled", YES);
     _wAlarm   = COCB(@"widgetAlarm", YES);
@@ -1105,7 +1322,6 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
 
     // Малые часы при уведомлениях
     _cEnabled = COCB(@"collapseEnabled", YES);
-    _cSize    = MAX(40, MIN(200, COCF(@"collapseSize", 100)));
     _cSpeed   = MAX(30, MIN(300, COCF(@"collapseSpeed", 100)));
     _cDist    = MAX(40, MIN(600, COCF(@"collapseDistance", 140)));
     _cForce   = COCB(@"collapseForce", NO);
@@ -1281,7 +1497,7 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     in.sx = k * _w / 100.0;
     in.sy = k * _h / 100.0;
     in.ws = _wScale / 100.0;
-    in.smallK = _cSize / 100.0;
+    in.smallK = 1.0;   // малые часы масштабируются вместе с размером, который задан в редакторе
     in.style = (int)_style;
     in.n = (int)MIN(_cards.count, (NSUInteger)COC_MAXW);
 
@@ -1341,6 +1557,154 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     if (_dbg) [self bringSubviewToFront:_dbg];
 }
 
+#pragma mark Редактор (долгое нажатие)
+
+static void COCSetPref(NSString *key, double v) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFTypeRef)@(v), (__bridge CFStringRef)COC_DOMAIN);
+}
+
+// Отменяем уже начатые долгие нажатия системы (на iOS 16+ это вход в смену обоев)
+static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int depth, int *budget) {
+    if (depth > 14 || *budget <= 0) return;
+    for (UIGestureRecognizer *gr in v.gestureRecognizers) {
+        if (gr == except || ![gr isKindOfClass:[UILongPressGestureRecognizer class]] || !gr.enabled) continue;
+        if (gr.state == UIGestureRecognizerStatePossible || gr.state == UIGestureRecognizerStateBegan ||
+            gr.state == UIGestureRecognizerStateChanged) {
+            gr.enabled = NO;
+            gr.enabled = YES;
+        }
+    }
+    for (UIView *s in v.subviews) {
+        if (--(*budget) <= 0) return;
+        COCCancelLongPresses(s, except, depth + 1, budget);
+    }
+}
+
+- (void)installLongPressOn:(UIView *)host {
+    if (_lp || !host) return;
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                                                     action:@selector(handleLongPress:)];
+    lp.minimumPressDuration = 0.4;
+    lp.allowableMovement = 14;
+    lp.cancelsTouchesInView = NO;
+    lp.delegate = self;
+    [host addGestureRecognizer:lp];
+    _lp = lp;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (g != _lp) return [super gestureRecognizerShouldBegin:g];
+    if (!_enabled || _editing || self.hidden || !self.window) return NO;
+    UIView *host = g.view;
+    CGPoint p = [g locationInView:host];
+    // Низ экрана (фонарик, камера) и сами уведомления — не наша зона
+    if (p.y > host.bounds.size.height - 170) return NO;
+    UIView *hit = [host hitTest:p withEvent:nil];
+    for (UIView *v = hit; v && v != host; v = v.superview) {
+        if (COCIsNotifCell(v)) return NO;
+    }
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)o {
+    return YES;
+}
+
+- (void)handleLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    int budget = 2500;
+    if (self.window) COCCancelLongPresses(self.window, g, 0, &budget);
+    [self beginEditing];
+}
+
+- (void)beginEditing {
+    UIView *host = self.superview;
+    if (!host || _editing) return;
+    _editing = YES;
+    _sess[0] = _size; _sess[1] = _w; _sess[2] = _h; _sess[3] = _ox; _sess[4] = _oy;
+
+    _editor = [[COCEditorView alloc] initWithClock:self];
+    _editor.frame = host.bounds;
+    _editor.alpha = 0;
+    [host addSubview:_editor];
+    [UIView animateWithDuration:0.25 animations:^{ self->_editor.alpha = 1; }];
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium] impactOccurred];
+
+    [self setNeedsLayout];
+    [self syncLink];
+    [self wake];
+}
+
+- (void)endEditingSave:(BOOL)save {
+    if (!_editing) return;
+    if (save) {
+        COCSetPref(@"size", _size);
+        COCSetPref(@"width", _w);
+        COCSetPref(@"height", _h);
+        COCSetPref(@"offsetX", _ox);
+        COCSetPref(@"offsetY", _oy);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)COC_DOMAIN);
+    } else {
+        _size = _sess[0]; _w = _sess[1]; _h = _sess[2]; _ox = _sess[3]; _oy = _sess[4];
+    }
+    _editing = NO;
+    COCEditorView *e = _editor;
+    _editor = nil;
+    [UIView animateWithDuration:0.2 animations:^{ e.alpha = 0; } completion:^(BOOL f) { [e removeFromSuperview]; }];
+    [self setNeedsLayout];
+    [self syncLink];
+    [self wake];
+}
+
+- (CGRect)editorFrame {
+    [self layoutIfNeeded];
+    if (!_hasLayout) return CGRectZero;
+    return CGRectUnion(_E.hours, _E.mins);
+}
+
+- (CGRect)editorDragFrame {
+    CGRect f = [self editorFrame];
+    if (_hasLayout && _E.date.size.width > 0) f = CGRectUnion(f, _E.date);
+    return f;
+}
+
+- (void)editorSnapshot {
+    _snap[0] = _size; _snap[1] = _w; _snap[2] = _h; _snap[3] = _ox; _snap[4] = _oy;
+    _snapFrame = [self editorFrame];
+}
+
+- (void)editorMoveBy:(CGPoint)d {
+    _ox = MAX(-600, MIN(600, _snap[3] + d.x));
+    _oy = MAX(-600, MIN(900, _snap[4] + d.y));
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+}
+
+- (void)editorResizeCorner:(CGPoint)c lockRatio:(BOOL)lock {
+    CGRect F = _snapFrame;
+    if (F.size.width < 1 || F.size.height < 1) return;
+    CGFloat W1 = MAX(40, MIN(self.bounds.size.width * 1.2, c.x - F.origin.x));
+    CGFloat H1 = MAX(30, c.y - F.origin.y);
+    CGFloat fx = W1 / F.size.width, fy = H1 / F.size.height;
+    if (lock) {
+        CGFloat f = (fabs(fx - 1) > fabs(fy - 1)) ? fx : fy;
+        _size = MAX(30, MIN(400, _snap[0] * f));
+        _w = _snap[1]; _h = _snap[2];
+    } else {
+        _size = _snap[0];
+        _w = MAX(30, MIN(400, _snap[1] * fx));
+        _h = MAX(30, MIN(400, _snap[2] * fy));
+    }
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+}
+
+- (void)editorReset {
+    _size = 100; _w = 100; _h = 100; _ox = 0; _oy = 0;
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+}
+
 #pragma mark Привод анимации
 
 - (void)wake {
@@ -1351,7 +1715,7 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
 
 // Включает/выключает CADisplayLink в зависимости от того, нужен ли он сейчас.
 - (void)syncLink {
-    BOOL need = self.window && _enabled && (_cEnabled || _cForce);
+    BOOL need = self.window && _enabled && (_cEnabled || _cForce || _editing);
     if (need && !_link) {
         COCLinkProxy *proxy = [[COCLinkProxy alloc] initWithTarget:self];
         _link = [CADisplayLink displayLinkWithTarget:proxy selector:@selector(fire:)];
@@ -1438,6 +1802,7 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     [self measureTarget:&target interactive:&inter];
     if (_cForce) target = 1;
     if (!_cEnabled && !_cForce) target = 0;
+    if (_editing) target = 0;
     _target = target;
     _inter = inter;
 
@@ -1447,8 +1812,8 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
         _prog = target;
         _vel = 0;
     } else {
-        // Критически демпфированная пружина: мягкий разгон и посадка без перелёта (~0.6 с)
-        CGFloat om = 10.0 * _cSpeed / 100.0;
+        // Критически демпфированная пружина: мягкий разгон и посадка без перелёта (~0.9 с при 100%)
+        CGFloat om = (10.0 / 1.5) * _cSpeed / 100.0;
         int steps = MAX(1, (int)ceil(dt * 120.0));
         CGFloat h = dt / steps;
         for (int i = 0; i < steps; i++) {

@@ -7,6 +7,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Размер и положение часов меняются на самом экране блокировки: долгое нажатие на пустом месте → тяни рамку, чтобы переместить, и уголок, чтобы изменить размер.</string>
 			<key>label</key>
 			<string>Основное</string>
 		</dict>
@@ -292,78 +294,6 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>Размер, %</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>100.0</real>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>size</string>
-			<key>max</key>
-			<real>200.0</real>
-			<key>min</key>
-			<real>50.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Ширина (растяжение), %</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>100.0</real>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>width</string>
-			<key>max</key>
-			<real>200.0</real>
-			<key>min</key>
-			<real>40.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Высота (растяжение), %</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>100.0</real>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>height</string>
-			<key>max</key>
-			<real>250.0</real>
-			<key>min</key>
-			<real>40.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
 			<string>Прозрачность часов, %</string>
 		</dict>
 		<dict>
@@ -457,32 +387,10 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>100% — стандартная плавная скорость, меньше — медленнее, больше — быстрее.</string>
 			<key>label</key>
-			<string>Размер малых часов</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>100.0</real>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>collapseSize</string>
-			<key>max</key>
-			<real>200.0</real>
-			<key>min</key>
-			<real>40.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Плавность (скорость анимации, %)</string>
+			<string>Скорость анимации, %</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
