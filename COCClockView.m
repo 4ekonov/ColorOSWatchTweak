@@ -1,5 +1,9 @@
 #import <objc/message.h>
 #import <dlfcn.h>
+#import <string.h>
+#import <math.h>
+#import <objc/runtime.h>
+#import <QuartzCore/QuartzCore.h>
 #import "COCClockView.h"
 #import "Prefs.h"
 
@@ -24,15 +28,7 @@ static UIFont *COCRounded(CGFloat size, UIFontWeight weight) {
 //   COC_STRETCH_COMPACT — компактный вариант с виджетами сбоку, чуть шире
 //
 
-#define COC_BW 68.0
-#define COC_CH 472.0
-#define COC_PITCH 91.0
-#define COC_LINEGAP 14.0
-#define COC_PADX 10.0
-#define COC_PADY 1.0
 
-#define COC_STRETCH_FULL 1.43
-#define COC_STRETCH_COMPACT 1.60
 
 typedef struct { float x, y; } COCPt;
 
@@ -218,6 +214,28 @@ static const COCRing *COCRingsFor(unichar ch, int *count) {
     }
 }
 
+
+// ===== COC-CORE-BEGIN =====
+// Чистая геометрия (без UIKit): раскладка «развёрнуто» / «свёрнуто» и траектория между ними.
+// Этот блок компилируется и проверяется отдельно, вне телефона.
+
+#define COC_BW 68.0
+#define COC_CH 472.0
+#define COC_PITCH 91.0
+#define COC_LINEGAP 14.0
+#define COC_PADX 10.0
+#define COC_PADY 1.0
+
+// Растяжение цифр по горизонтали относительно нативных пропорций листа (1.0 = как на листе):
+//   FULL    — «во всю ширину» и вертикальные цифры слева
+//   COMPACT — компактный вариант с виджетами сбоку, чуть шире
+//   SMALL   — малые часы при уведомлениях (шире и приземистее, как на референсе 1605)
+#define COC_STRETCH_FULL 1.43
+#define COC_STRETCH_COMPACT 1.60
+#define COC_STRETCH_SMALL 2.10
+
+#define COC_MAXW 8
+
 static inline CGFloat COCBlockW(NSUInteger m) { return (m - 1) * COC_PITCH + COC_BW; }
 static inline CGFloat COCBlockH(NSUInteger n) { return n * COC_CH + (n - 1) * COC_LINEGAP; }
 
@@ -226,12 +244,241 @@ static inline CGFloat COCAspect(NSUInteger m, NSUInteger n, CGFloat stretch) {
     return COCBlockH(n) / (COCBlockW(m) * stretch);
 }
 
-// Рамка вида = блок цифр плюс поля под выступающие части глифов.
-static CGRect COCOutsetFrame(CGRect block, NSUInteger m, NSUInteger n) {
-    CGFloat px = COC_PADX * block.size.width / COCBlockW(m);
-    CGFloat py = COC_PADY * block.size.height / COCBlockH(n);
-    return CGRectInset(block, -px, -py);
+static inline CGFloat COCClamp01(CGFloat x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+static inline CGFloat COCWin(CGFloat p, CGFloat a, CGFloat b) { return COCClamp01((p - a) / (b - a)); }
+static inline CGFloat COCSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
+static inline CGFloat COCMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b - a) * t; }
+
+// Положение — по осям отдельно (так получается дуга), размер — по среднему прогрессу.
+static CGRect COCMixRect(CGRect a, CGRect b, CGFloat tx, CGFloat ty) {
+    CGFloat ts = (tx + ty) * 0.5;
+    return CGRectMake(COCMix(a.origin.x, b.origin.x, tx), COCMix(a.origin.y, b.origin.y, ty),
+                      COCMix(a.size.width, b.size.width, ts), COCMix(a.size.height, b.size.height, ts));
 }
+
+// Рамка вида из двух цифр = блок плюс поля под выступающие части глифов («4», «2», «7»).
+static CGRect COCPairFrame(CGRect b) {
+    CGFloat px = COC_PADX * b.size.width / COCBlockW(2);
+    CGFloat py = COC_PADY * b.size.height / COC_CH;
+    return CGRectInset(b, -px, -py);
+}
+
+// Блок из 4 цифр в одну строку -> блок часов (цифры 0–1) и блок минут (цифры 2–3).
+static void COCSplitBlock4(CGRect b, CGRect *h, CGRect *m) {
+    CGFloat f = b.size.width / COCBlockW(4);
+    CGFloat w2 = COCBlockW(2) * f;
+    *h = CGRectMake(b.origin.x, b.origin.y, w2, b.size.height);
+    *m = CGRectMake(b.origin.x + 2 * COC_PITCH * f, b.origin.y, w2, b.size.height);
+}
+
+static CGRect COCRectAroundCenter(CGSize s, CGPoint c) {
+    return CGRectMake(c.x - s.width / 2, c.y - s.height / 2, s.width, s.height);
+}
+
+static CGPoint COCCenter(CGRect r) {
+    return CGPointMake(r.origin.x + r.size.width / 2, r.origin.y + r.size.height / 2);
+}
+
+typedef struct {
+    CGRect R;            // область контента (после отступов и сдвига)
+    CGFloat sx, sy;      // растяжение развёрнутых цифр («размер» × «ширина/высота»)
+    CGFloat k;           // общий масштаб («размер»)
+    CGFloat ws;          // масштаб виджетов
+    CGFloat smallK;      // масштаб малых часов
+    int style;           // 1, 2 или 3
+    int n;               // число виджетов
+    CGSize date;         // развёрнутая дата (1 и 2: три строки, 3: одна строка)
+    CGSize weather;      // погода справа в строке даты (вариант 3)
+    CGSize dateS;        // малая дата справа (три строки)
+} COCLayoutIn;
+
+typedef struct {
+    CGRect hours, mins;          // рамки видов цифр (с полями)
+    CGRect date, weather, dateS; // подписи
+    CGRect card[COC_MAXW];       // квадраты виджетов
+    CGFloat sq;                  // сторона квадрата
+    CGFloat bottom;              // нижняя граница всего блока
+} COCLayoutOut;
+
+static void COCLayoutExpanded(const COCLayoutIn *in, COCLayoutOut *o) {
+    CGRect R = in->R;
+    CGFloat u = R.size.width;
+    CGRect dr;
+    memset(o, 0, sizeof(*o));
+
+    if (in->style == 3) {
+        // Строка «дата — погода», 0851 во всю ширину, виджеты под цифрами
+        CGFloat rowH = MAX(in->date.height, in->weather.height);
+        o->date = CGRectMake(R.origin.x, R.origin.y, in->date.width, in->date.height);
+        o->weather = CGRectMake(CGRectGetMaxX(R) - in->weather.width, R.origin.y,
+                                in->weather.width, in->weather.height);
+        dr = CGRectMake(R.origin.x, R.origin.y + rowH + 14,
+                        u * in->sx, u * COCAspect(4, 1, COC_STRETCH_FULL) * in->sy);
+        COCSplitBlock4(dr, &o->hours, &o->mins);
+    } else if (in->style == 2) {
+        // Компактное 0851 (~68% ширины), дата под цифрами, виджеты колонкой справа
+        CGFloat bw = u * 0.68;
+        dr = CGRectMake(R.origin.x, R.origin.y,
+                        bw * in->sx, bw * COCAspect(4, 1, COC_STRETCH_COMPACT) * in->sy);
+        COCSplitBlock4(dr, &o->hours, &o->mins);
+    } else {
+        // Вертикальные цифры слева (08 над 51), виджеты колонкой справа
+        CGFloat bw = u * 0.36;
+        CGFloat bh = bw * COCAspect(2, 2, COC_STRETCH_FULL);
+        dr = CGRectMake(R.origin.x, R.origin.y, bw * in->sx, bh * in->sy);
+        CGFloat lineH = dr.size.height * COC_CH / COCBlockH(2);
+        CGFloat gap = dr.size.height * COC_LINEGAP / COCBlockH(2);
+        o->hours = CGRectMake(dr.origin.x, dr.origin.y, dr.size.width, lineH);
+        o->mins = CGRectMake(dr.origin.x, dr.origin.y + lineH + gap, dr.size.width, lineH);
+    }
+    if (in->style != 3) {
+        o->date = CGRectMake(R.origin.x, CGRectGetMaxY(dr) + 12, in->date.width, in->date.height);
+        o->weather = CGRectMake(CGRectGetMaxX(R), R.origin.y, 0, 0);
+    }
+    o->hours = COCPairFrame(o->hours);
+    o->mins = COCPairFrame(o->mins);
+
+    CGFloat sq = 0.19 * u * in->ws;
+    CGFloat colGap = MAX(8, sq * 0.18);
+    o->sq = sq;
+    CGFloat bottom = MAX(CGRectGetMaxY(dr), CGRectGetMaxY(o->date));
+    for (int i = 0; i < in->n && i < COC_MAXW; i++) {
+        CGFloat x, y;
+        if (in->style == 3) {
+            // Ряд под цифрами: 1 — слева, 2 — по краям, 3+ — равномерно
+            y = CGRectGetMaxY(dr) + u * 0.07;
+            x = (in->n == 1) ? R.origin.x : R.origin.x + i * (u - sq) / (in->n - 1);
+        } else {
+            // Колонка квадратов у правого края
+            x = CGRectGetMaxX(R) - sq;
+            y = R.origin.y + i * (sq + colGap);
+        }
+        o->card[i] = CGRectMake(x, y, sq, sq);
+        bottom = MAX(bottom, y + sq);
+    }
+    o->bottom = bottom;
+}
+
+static void COCLayoutCollapsed(const COCLayoutIn *in, COCLayoutOut *o, CGFloat sqExpanded) {
+    CGRect R = in->R;
+    CGFloat u = R.size.width;
+    memset(o, 0, sizeof(*o));
+
+    // Малые часы слева сверху, дата справа, виджеты рядом снизу — одинаково для всех вариантов
+    CGFloat cw = u * 0.34 * in->k * in->smallK;
+    CGRect dr = CGRectMake(R.origin.x, R.origin.y, cw, cw * COCAspect(4, 1, COC_STRETCH_SMALL));
+    COCSplitBlock4(dr, &o->hours, &o->mins);
+    o->hours = COCPairFrame(o->hours);
+    o->mins = COCPairFrame(o->mins);
+
+    o->dateS = CGRectMake(CGRectGetMaxX(R) - in->dateS.width, R.origin.y - 2,
+                          in->dateS.width, in->dateS.height);
+
+    CGFloat sq = sqExpanded;
+    int n = in->n < COC_MAXW ? in->n : COC_MAXW;
+    if (n > 0 && n * sq + (n - 1) * 8 > u) sq = (u - (n - 1) * 8) / n;
+    o->sq = sq;
+    CGFloat gapH = (n > 1) ? MIN(16, (u - n * sq) / (n - 1)) : 0;
+    CGFloat y = CGRectGetMaxY(dr) + 20;
+    CGFloat bottom = MAX(CGRectGetMaxY(dr), CGRectGetMaxY(o->dateS));
+    for (int i = 0; i < n; i++) {
+        o->card[i] = CGRectMake(R.origin.x + i * (sq + gapH), y, sq, sq);
+        bottom = MAX(bottom, y + sq);
+    }
+    o->bottom = bottom;
+}
+
+// Обе раскладки сразу; подписи «стыкуются» центрами, чтобы переход выглядел как перетекание.
+static void COCComputeLayout(const COCLayoutIn *in, COCLayoutOut *E, COCLayoutOut *C) {
+    COCLayoutExpanded(in, E);
+    COCLayoutCollapsed(in, C, E->sq);
+    E->dateS = COCRectAroundCenter(in->dateS.width > 0 || in->dateS.height > 0
+                                       ? in->dateS : in->date,
+                                   COCCenter(E->date));
+    C->date = COCRectAroundCenter(in->date, COCCenter(C->dateS));
+    C->weather = COCRectAroundCenter(in->weather, COCCenter(C->dateS));
+}
+
+// Хореография: у каждого варианта свои окна прогресса. Для каждого элемента:
+//   [w0, w1] — окно на общей шкале 0..1, внутри него отдельные окна для осей x и y.
+// Так траектории получаются «Г-образными» и элементы не наезжают друг на друга.
+typedef struct {
+    CGFloat h0, h1, hx0, hx1, hy0, hy1;   // часы
+    CGFloat m0, m1, mx0, mx1, my0, my1;   // минуты
+    CGFloat c0, cs, cx0, cx1, cy0, cy1;   // карточки: окно [c0 + i*cs, 1]
+    CGFloat dOut;                         // старая дата исчезает к dOut
+    CGFloat dIn0;                         // малая дата проявляется с dIn0
+} COCChoreo;
+
+static const COCChoreo kChoreo[3] = {
+    /* 1: вертикальные — часы сжимаются первыми, минуты уезжают вправо, а потом вверх на место */
+    { 0.00, 0.60, 0.0, 1.0, 0.0, 1.0,
+      0.18, 0.82, 0.0, 0.5, 0.4, 1.0,
+      0.40, 0.05, 0.0, 1.0, 0.0, 1.0,
+      0.30, 0.70 },
+    /* 2: компактные — цифры уходят почти вместе, виджеты спускаются и подъезжают рядом */
+    { 0.00, 0.62, 0.0, 1.0, 0.0, 1.0,
+      0.04, 0.66, 0.0, 1.0, 0.0, 1.0,
+      0.40, 0.05, 0.0, 1.0, 0.0, 1.0,
+      0.38, 0.70 },
+    /* 3: во всю ширину — цифры сжимаются вверх, строка даты перетекает вправо, ряд виджетов поднимается */
+    { 0.00, 0.62, 0.0, 1.0, 0.0, 1.0,
+      0.03, 0.66, 0.0, 1.0, 0.0, 1.0,
+      0.25, 0.05, 0.5, 1.0, 0.0, 0.55,
+      0.35, 0.55 },
+};
+
+typedef struct {
+    CGRect hours, mins, date, weather, dateS;
+    CGFloat dateA, weatherA, dateSA;
+    CGRect card[COC_MAXW];
+} COCFrame;
+
+// Прогресс элемента по осям: окно [w0, w1] общей шкалы, внутри — окна оси x и оси y.
+static void COCAxes(CGFloat p, CGFloat w0, CGFloat w1, CGFloat x0, CGFloat x1,
+                    CGFloat y0, CGFloat y1, CGFloat *tx, CGFloat *ty) {
+    CGFloat t = COCWin(p, w0, w1);
+    *tx = COCSmooth(COCWin(t, x0, x1));
+    *ty = COCSmooth(COCWin(t, y0, y1));
+}
+
+static void COCInterpolate(const COCLayoutOut *E, const COCLayoutOut *C, int style, int n,
+                           CGFloat p, COCFrame *f) {
+    const COCChoreo *c = &kChoreo[(style < 1 || style > 3) ? 0 : style - 1];
+    CGFloat tx, ty;
+    p = COCClamp01(p);
+    memset(f, 0, sizeof(*f));
+
+    COCAxes(p, c->h0, c->h1, c->hx0, c->hx1, c->hy0, c->hy1, &tx, &ty);
+    f->hours = COCMixRect(E->hours, C->hours, tx, ty);
+    COCAxes(p, c->m0, c->m1, c->mx0, c->mx1, c->my0, c->my1, &tx, &ty);
+    f->mins = COCMixRect(E->mins, C->mins, tx, ty);
+
+    CGFloat td = COCSmooth(COCWin(p, 0, 0.90));
+    f->date = COCMixRect(E->date, C->date, td, td);
+    f->weather = COCMixRect(E->weather, C->weather, td, td);
+    f->dateA = 1 - COCWin(p, 0, c->dOut);
+    f->weatherA = 1 - COCWin(p, 0, c->dOut * 0.85);
+
+    CGFloat ts = COCSmooth(COCWin(p, 0.10, 1.0));
+    f->dateS = COCMixRect(E->dateS, C->dateS, ts, ts);
+    f->dateSA = COCSmooth(COCWin(p, c->dIn0, 1.0));
+
+    for (int i = 0; i < n && i < COC_MAXW; i++) {
+        COCAxes(p, c->c0 + i * c->cs, 1.0, c->cx0, c->cx1, c->cy0, c->cy1, &tx, &ty);
+        f->card[i] = COCMixRect(E->card[i], C->card[i], tx, ty);
+    }
+}
+
+// Цель сжатия по геометрии списка: top — верх самой высокой видимой ячейки уведомления
+// в координатах страницы, H — высота страницы, dist — путь, на котором часы сжимаются полностью.
+// Нет ячеек → top = H или больше → 0; ячейка поднялась на dist и выше → 1.
+static inline CGFloat COCCollapseTarget(CGFloat top, CGFloat H, CGFloat dist) {
+    if (dist < 1) dist = 1;
+    return COCClamp01((H - top) / dist);
+}
+// ===== COC-CORE-END =====
+
 
 static void COCAddRing(CGMutablePathRef p, const COCPt *v, int n) {
     if (n < 3) return;
@@ -255,100 +502,84 @@ static CGPathRef COCGlyphPath(unichar ch) {
     return (ch >= '0' && ch <= '9') ? cache[ch - '0'] : NULL;
 }
 
-#pragma mark - Вид с цифрами
+
+#pragma mark - Вид с двумя цифрами (CAShapeLayer: путь перестраивается только при смене размера/текста)
 
 @interface COCDigitsView : UIView
-@property (nonatomic, copy) NSArray<NSString *> *lines;   // "0851" или "08","51"
-@property (nonatomic, strong) UIColor *hourColor;         // часы (ярче)
-@property (nonatomic, strong) UIColor *minuteColor;       // минуты
+@property (nonatomic, copy) NSString *text;               // две цифры, например "08"
+@property (nonatomic, strong) UIColor *color;
 @property (nonatomic, assign) CGFloat outlineAlpha;       // 0 — без контура
 @end
 
-@implementation COCDigitsView
+@implementation COCDigitsView {
+    CAShapeLayer *_shape;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.backgroundColor = [UIColor clearColor];
-        self.opaque = NO;
-        self.contentMode = UIViewContentModeRedraw;
-        _hourColor = [UIColor whiteColor];
-        _minuteColor = _hourColor;
+        self.userInteractionEnabled = NO;
+        _color = [UIColor whiteColor];
         _outlineAlpha = 0.38;
+        _shape = [CAShapeLayer layer];
+        _shape.fillRule = kCAFillRuleEvenOdd;
+        _shape.lineJoin = kCALineJoinRound;
+        _shape.contentsScale = UIScreen.mainScreen.scale;
+        [self.layer addSublayer:_shape];
+        [self applyStyle];
     }
     return self;
 }
 
-- (void)setLines:(NSArray<NSString *> *)lines {
-    if ([_lines isEqualToArray:lines]) return;
-    _lines = [lines copy];
-    [self setNeedsDisplay];
+- (void)applyStyle {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _shape.fillColor = _color.CGColor;
+    _shape.strokeColor = _outlineAlpha > 0.001 ? [UIColor colorWithWhite:1 alpha:_outlineAlpha].CGColor : NULL;
+    [CATransaction commit];
 }
 
-- (void)setHourColor:(UIColor *)c { _hourColor = c; [self setNeedsDisplay]; }
-- (void)setMinuteColor:(UIColor *)c { _minuteColor = c; [self setNeedsDisplay]; }
-- (void)setOutlineAlpha:(CGFloat)a { _outlineAlpha = a; [self setNeedsDisplay]; }
+- (void)setText:(NSString *)text {
+    if ([_text isEqualToString:text]) return;
+    _text = [text copy];
+    [self setNeedsLayout];
+}
+- (void)setColor:(UIColor *)c { _color = c; [self applyStyle]; }
+- (void)setOutlineAlpha:(CGFloat)a { _outlineAlpha = a; [self applyStyle]; }
 
-- (void)drawRect:(CGRect)rect {
-    NSUInteger n = self.lines.count;
-    if (n == 0) return;
-    NSUInteger m = self.lines[0].length;
-    if (m == 0) return;
-
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
+- (void)layoutSubviews {
+    [super layoutSubviews];
     CGRect B = self.bounds;
+    NSUInteger m = _text.length;
 
-    // Нативные единицы -> точки вида (вместе с полями)
-    CGFloat sx = B.size.width / (COCBlockW(m) + 2 * COC_PADX);
-    CGFloat sy = B.size.height / (COCBlockH(n) + 2 * COC_PADY);
-    UIColor *rim = [UIColor colorWithWhite:1 alpha:self.outlineAlpha];
-    CGFloat lw = MAX(0.9, COC_CH * sy * 0.0030);
-
-    for (NSUInteger i = 0; i < n; i++) {
-        NSString *s = self.lines[i];
-        CGFloat y0 = (COC_PADY + i * (COC_CH + COC_LINEGAP)) * sy;
-
-        for (NSUInteger j = 0; j < s.length; j++) {
-            CGPathRef gp = COCGlyphPath([s characterAtIndex:j]);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _shape.frame = B;
+    if (m == 0 || B.size.width < 1 || B.size.height < 1) {
+        _shape.path = NULL;
+    } else {
+        // Нативные единицы -> точки вида (вместе с полями под выступающие части глифов)
+        CGFloat sx = B.size.width / (COCBlockW(m) + 2 * COC_PADX);
+        CGFloat sy = B.size.height / (COC_CH + 2 * COC_PADY);
+        CGMutablePathRef mp = CGPathCreateMutable();
+        for (NSUInteger j = 0; j < m; j++) {
+            CGPathRef gp = COCGlyphPath([_text characterAtIndex:j]);
             if (!gp) continue;
-
-            // Однострочный вариант: первые две цифры — часы, остальные — минуты.
-            // Двухстрочный: верхняя строка — часы, нижняя — минуты.
-            BOOL isHour = (n > 1) ? (i == 0) : (j < s.length / 2);
-            UIColor *col = isHour ? self.hourColor : self.minuteColor;
-
-            // Контур переводим в координаты вида: толщина обводки не зависит от растяжения
-            CGFloat x0 = (COC_PADX + j * COC_PITCH) * sx;
-            CGAffineTransform t = CGAffineTransformMake(sx, 0, 0, sy, x0, y0);
-            CGPathRef vp = CGPathCreateCopyByTransformingPath(gp, &t);
-
-            CGContextSetFillColorWithColor(ctx, col.CGColor);
-            CGContextAddPath(ctx, vp);
-            CGContextEOFillPath(ctx);
-
-            if (self.outlineAlpha > 0.001) {
-                // Едва заметный светлый контур строго внутри цифры: клип по контуру + обводка 2×
-                CGContextSaveGState(ctx);
-                CGContextAddPath(ctx, vp);
-                CGContextEOClip(ctx);
-                CGContextAddPath(ctx, vp);
-                CGContextSetLineWidth(ctx, lw * 2);
-                CGContextSetLineJoin(ctx, kCGLineJoinRound);
-                CGContextSetStrokeColorWithColor(ctx, rim.CGColor);
-                CGContextStrokePath(ctx);
-                CGContextRestoreGState(ctx);
-            }
-            CGPathRelease(vp);
+            CGAffineTransform t = CGAffineTransformMake(sx, 0, 0, sy, (COC_PADX + j * COC_PITCH) * sx, COC_PADY * sy);
+            CGPathAddPath(mp, &t, gp);
         }
+        _shape.path = mp;
+        _shape.lineWidth = MAX(0.8, COC_CH * sy * 0.0030);
+        CGPathRelease(mp);
     }
+    [CATransaction commit];
 }
 
 @end
 
-#pragma mark - Карточка виджета (стиль iOS 17/18: квадрат + материал)
+#pragma mark - Карточка виджета (квадрат, прозрачная заливка без размытия)
 
 @interface COCWidgetCard : UIView
-@property (nonatomic, strong) UIVisualEffectView *blur;
-@property (nonatomic, strong) UIView *tintView;
 @property (nonatomic, strong) UIImageView *iconView;
 @property (nonatomic, strong) UILabel *valueLabel;
 @property (nonatomic, copy) NSString *symbol;
@@ -356,18 +587,14 @@ static CGPathRef COCGlyphPath(unichar ch) {
 - (void)setSymbol:(NSString *)symbol value:(NSString *)value;
 @end
 
-@implementation COCWidgetCard
+@implementation COCWidgetCard {
+    CGFloat _lastW;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.clipsToBounds = YES;
-
-        UIBlurEffect *eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
-        _blur = [[UIVisualEffectView alloc] initWithEffect:eff];
-        [self addSubview:_blur];
-
-        _tintView = [[UIView alloc] init];
-        [self addSubview:_tintView];
+        self.userInteractionEnabled = NO;
 
         _iconView = [[UIImageView alloc] init];
         _iconView.tintColor = [UIColor whiteColor];
@@ -380,19 +607,22 @@ static CGPathRef COCGlyphPath(unichar ch) {
         _valueLabel.minimumScaleFactor = 0.5;
         [self addSubview:_valueLabel];
 
-        _fillAlpha = 0.1;
+        self.fillAlpha = 0.1;
     }
     return self;
 }
 
+// Просто полупрозрачная белая заливка — обои видны сквозь карточку, как на референсе
 - (void)setFillAlpha:(CGFloat)fillAlpha {
     _fillAlpha = fillAlpha;
-    _tintView.backgroundColor = [UIColor colorWithWhite:1 alpha:fillAlpha];
+    self.backgroundColor = [UIColor colorWithWhite:1 alpha:fillAlpha];
 }
 
 - (void)setSymbol:(NSString *)symbol value:(NSString *)value {
+    if ([_symbol isEqualToString:symbol] && [_valueLabel.text isEqualToString:value]) return;
     _symbol = [symbol copy];
     _valueLabel.text = value;
+    _iconView.image = nil;
     [self setNeedsLayout];
 }
 
@@ -401,20 +631,20 @@ static CGPathRef COCGlyphPath(unichar ch) {
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
     CGFloat pad = w * 0.17;
 
-    _blur.frame = self.bounds;
-    _tintView.frame = self.bounds;
-    _tintView.backgroundColor = [UIColor colorWithWhite:1 alpha:_fillAlpha];
-
-    UIImageSymbolConfiguration *cfg =
-        [UIImageSymbolConfiguration configurationWithPointSize:w * 0.30 weight:UIImageSymbolWeightMedium];
-    _iconView.image = _symbol ? [UIImage systemImageNamed:_symbol withConfiguration:cfg] : nil;
+    // Иконка и шрифт зависят только от ширины — не пересоздаём их, пока размер не изменился
+    if (!_iconView.image || fabs(w - _lastW) > 0.5) {
+        _lastW = w;
+        UIImageSymbolConfiguration *cfg =
+            [UIImageSymbolConfiguration configurationWithPointSize:w * 0.30 weight:UIImageSymbolWeightMedium];
+        _iconView.image = _symbol ? [UIImage systemImageNamed:_symbol withConfiguration:cfg] : nil;
+        _valueLabel.font = COCRounded(w * 0.24, UIFontWeightSemibold);
+    }
     _iconView.frame = CGRectMake(pad, pad, w - pad * 2, w * 0.36);
-
-    _valueLabel.font = COCRounded(w * 0.24, UIFontWeightSemibold);
     _valueLabel.frame = CGRectMake(pad, h - pad - w * 0.30, w - pad * 2, w * 0.30);
 }
 
 @end
+
 
 #pragma mark - Погода (open-meteo, без ключа)
 
@@ -629,10 +859,96 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     *minute = m;
 }
 
+#pragma mark - Слежение за уведомлениями (геометрия ячеек на экране)
+
+static __weak UIView *COCListHint;   // вид списка уведомлений (подсказка из Tweak.xm)
+
+static BOOL COCIsNotifCell(UIView *v) {
+    static Class cellCls;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cellCls = NSClassFromString(@"NCNotificationListCell"); });
+    if (cellCls && [v isKindOfClass:cellCls]) return YES;
+    const char *n = object_getClassName(v);
+    return n && strstr(n, "NotificationListCell") != NULL;
+}
+
+// Где ячейка на самом деле находится сейчас (по presentationLayer — виден и ход анимаций UIKit,
+// и палец, ведущий список). Координаты — в системе root.
+static BOOL COCPresentedRect(UIView *v, CALayer *root, CGRect *out, CGFloat *alpha) {
+    CALayer *l = v.layer;
+    CGRect b0 = (l.presentationLayer ?: l).bounds;
+    CGPoint pts[4] = {
+        CGPointMake(CGRectGetMinX(b0), CGRectGetMinY(b0)), CGPointMake(CGRectGetMaxX(b0), CGRectGetMinY(b0)),
+        CGPointMake(CGRectGetMinX(b0), CGRectGetMaxY(b0)), CGPointMake(CGRectGetMaxX(b0), CGRectGetMaxY(b0)) };
+    CGFloat a = 1;
+    int guard = 0;
+    while (l && l != root && guard++ < 48) {
+        CALayer *pl = l.presentationLayer ?: l;
+        if (pl.hidden) return NO;
+        a *= pl.opacity;
+        CGRect b = pl.bounds;
+        CGPoint pos = pl.position, an = pl.anchorPoint;
+        CGAffineTransform t = CATransform3DGetAffineTransform(pl.transform);
+        CGFloat ox = b.origin.x + an.x * b.size.width, oy = b.origin.y + an.y * b.size.height;
+        for (int i = 0; i < 4; i++) {
+            CGPoint q = CGPointApplyAffineTransform(CGPointMake(pts[i].x - ox, pts[i].y - oy), t);
+            pts[i] = CGPointMake(pos.x + q.x, pos.y + q.y);
+        }
+        l = l.superlayer;
+    }
+    CGFloat x0 = pts[0].x, x1 = pts[0].x, y0 = pts[0].y, y1 = pts[0].y;
+    for (int i = 1; i < 4; i++) {
+        x0 = MIN(x0, pts[i].x); x1 = MAX(x1, pts[i].x);
+        y0 = MIN(y0, pts[i].y); y1 = MAX(y1, pts[i].y);
+    }
+    if (!isfinite(x0 + x1 + y0 + y1)) return NO;
+    *out = CGRectMake(x0, y0, x1 - x0, y1 - y0);
+    *alpha = a;
+    return YES;
+}
+
+static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSMutableArray<UIView *> *out) {
+    if (depth > 14) return;
+    for (UIView *s in v.subviews) {
+        if (--(*budget) <= 0) return;
+        if (s == skip || s.hidden) continue;
+        if (COCIsNotifCell(s)) { [out addObject:s]; continue; }
+        COCCollectCells(s, depth + 1, budget, skip, out);
+    }
+}
+
+#pragma mark - Таймер анимации (через слабую ссылку, чтобы не удерживать вид)
+
+@interface COCClockView (Driver)
+- (void)displayTick:(CADisplayLink *)link;
+@end
+
+@interface COCLinkProxy : NSObject
+- (instancetype)initWithTarget:(COCClockView *)t;
+- (void)fire:(CADisplayLink *)l;
+@end
+
+@implementation COCLinkProxy {
+    __weak COCClockView *_t;
+}
+- (instancetype)initWithTarget:(COCClockView *)t {
+    if ((self = [super init])) _t = t;
+    return self;
+}
+- (void)fire:(CADisplayLink *)l {
+    COCClockView *t = _t;
+    if (t) [t displayTick:l]; else [l invalidate];
+}
+@end
+
+
 @implementation COCClockView {
-    COCDigitsView *_digits;
-    UILabel *_dateL;
+    COCDigitsView *_hoursV;
+    COCDigitsView *_minsV;
+    UILabel *_dateL;        // дата в развёрнутом виде (1–2: три строки, 3: одна строка)
     UILabel *_weatherL;     // только в варианте 3 (справа в строке даты)
+    UILabel *_dateS;        // малая дата справа (для свёрнутых часов)
+    UILabel *_dbg;          // отладочная строка
     NSMutableArray<COCWidgetCard *> *_cards;
     NSTimer *_timer;
     NSDateFormatter *_fmt;
@@ -647,19 +963,41 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     CGFloat _size, _w, _h, _op, _ox, _oy;
     CGFloat _wOp, _wRad, _wScale;
     NSString *_txt, *_city;
+    BOOL _cEnabled, _cForce, _debug;
+    CGFloat _cSize, _cSpeed, _cDist;
+
+    // Раскладки «развёрнуто» / «свёрнуто» и состояние анимации
+    COCLayoutOut _E, _C;
+    BOOL _hasLayout;
+    CADisplayLink *_link;
+    CFTimeInterval _lastTS, _activeUntil;
+    CGFloat _prog, _vel, _target;
+    BOOL _inter;
+    NSInteger _cellCount;
+    CGFloat _topSeen;
+    NSString *_src;
+    NSMutableArray<UIView *> *_cells;      // кэш ячеек при сканировании всего окна
+    CFTimeInterval _lastScan;
+}
+
++ (void)registerListView:(UIView *)view {
+    COCListHint = view;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.backgroundColor = [UIColor clearColor];
         _cards = [NSMutableArray array];
+        _cells = [NSMutableArray array];
         _fmt = [[NSDateFormatter alloc] init];
         _fmt.locale = [NSLocale currentLocale];
 
         UIDevice.currentDevice.batteryMonitoringEnabled = YES;
 
-        _digits = [[COCDigitsView alloc] init];
-        [self addSubview:_digits];
+        _hoursV = [[COCDigitsView alloc] init];
+        [self addSubview:_hoursV];
+        _minsV = [[COCDigitsView alloc] init];
+        [self addSubview:_minsV];
 
         _dateL = [[UILabel alloc] init];
         _dateL.textAlignment = NSTextAlignmentLeft;
@@ -668,6 +1006,11 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
         _weatherL = [[UILabel alloc] init];
         _weatherL.textAlignment = NSTextAlignmentRight;
         [self addSubview:_weatherL];
+
+        _dateS = [[UILabel alloc] init];
+        _dateS.textAlignment = NSTextAlignmentRight;
+        _dateS.numberOfLines = 0;
+        [self addSubview:_dateS];
 
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(weatherUpdated)
                                                      name:COCWeatherUpdated object:nil];
@@ -679,6 +1022,7 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_timer invalidate];
+    [_link invalidate];
 }
 
 // Часы не перехватывают касания: свайпы, камера, фонарик работают как обычно.
@@ -699,6 +1043,7 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
                                                 userInfo:nil repeats:YES];
         [self refreshContent];
     }
+    [self syncLink];
 }
 
 - (void)updateColors {
@@ -712,9 +1057,10 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
         [m getRed:&r green:&g blue:&bl alpha:&a];
         m = [UIColor colorWithRed:r green:g blue:bl alpha:1.0 - 0.55 * b];
     }
-    _digits.hourColor = h;
-    _digits.minuteColor = m;
-    _digits.outlineAlpha = _outline ? 0.38 : 0;
+    _hoursV.color = h;
+    _minsV.color = m;
+    _hoursV.outlineAlpha = _outline ? 0.38 : 0;
+    _minsV.outlineAlpha = _outline ? 0.38 : 0;
     _tint = h;
 }
 
@@ -757,6 +1103,14 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     _showWeather = COCB(@"showWeather", YES);
     _city        = COCS(@"weatherCity", @"Moscow");
 
+    // Малые часы при уведомлениях
+    _cEnabled = COCB(@"collapseEnabled", YES);
+    _cSize    = MAX(40, MIN(200, COCF(@"collapseSize", 100)));
+    _cSpeed   = MAX(30, MIN(300, COCF(@"collapseSpeed", 100)));
+    _cDist    = MAX(40, MIN(600, COCF(@"collapseDistance", 140)));
+    _cForce   = COCB(@"collapseForce", NO);
+    _debug    = COCB(@"debugOverlay", NO);
+
     if (_style < 1 || _style > 3) _style = 1;
 
     self.hidden = !_enabled;
@@ -772,6 +1126,8 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
             if (!on[i]) continue;
             COCWidgetCard *card = [[COCWidgetCard alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
             card.tag = i;
+            card.fillAlpha = _wOp / 100.0 * 0.5;
+            if (@available(iOS 13.0, *)) card.layer.cornerCurve = kCACornerCurveContinuous;
             [self addSubview:card];
             [_cards addObject:card];
         }
@@ -779,6 +1135,7 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 
     [self refreshContent];
     [self setNeedsLayout];
+    [self syncLink];
 }
 
 #pragma mark Содержимое
@@ -808,7 +1165,8 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
     NSString *h = [_fmt stringFromDate:now];
     _fmt.dateFormat = @"mm";
     NSString *m = [_fmt stringFromDate:now];
-    _digits.lines = (_style == 1) ? @[ h, m ] : @[ [h stringByAppendingString:m] ];
+    _hoursV.text = h;
+    _minsV.text = m;
 
     // Погода
     if (_showWeather || _wWeather) COCWeatherRefresh(_city);
@@ -846,6 +1204,25 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
         _dateL.numberOfLines = 0;
         _dateL.attributedText = ms;
         _weatherL.attributedText = nil;
+    }
+
+    // Малая дата справа (как на референсе: «23 Mar / Mon / погода»), выровнена по правому краю
+    {
+        UIFont *f = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+        ps.alignment = NSTextAlignmentRight;
+        ps.lineSpacing = 2;
+        NSDictionary *attrs = @{ NSFontAttributeName: f, NSForegroundColorAttributeName: col,
+                                 NSParagraphStyleAttributeName: ps };
+        NSMutableAttributedString *ms = [[NSMutableAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"%@\n%@", dm, wd] attributes:attrs];
+        if (showW) {
+            [ms appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:attrs]];
+            NSMutableAttributedString *wa = [[self weatherAttrWithFont:f color:col] mutableCopy];
+            [wa addAttribute:NSParagraphStyleAttributeName value:ps range:NSMakeRange(0, wa.length)];
+            [ms appendAttributedString:wa];
+        }
+        _dateS.attributedText = ms;
     }
 
     // Содержимое виджетов
@@ -889,82 +1266,225 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 
 #pragma mark Раскладка
 
-- (void)layoutSubviews {
-    [super layoutSubviews];
-
-    // Область контента: границы минус отступы, плюс смещение
+// Считает обе раскладки (развёрнутую и свёрнутую) по текущим настройкам и размерам подписей.
+- (void)rebuildLayout {
     CGRect R = UIEdgeInsetsInsetRect(self.bounds, UIEdgeInsetsMake(_pT, _pL, _pB, _pR));
     R = CGRectOffset(R, _ox, _oy);
     CGFloat u = R.size.width;
+    if (u < 10) { _hasLayout = NO; return; }
 
-    // «Размер» — общий масштаб, «ширина/высота» — растяжение поверх него
     CGFloat k = _size / 100.0;
-    CGFloat sx = k * _w / 100.0, sy = k * _h / 100.0;
+    COCLayoutIn in;
+    memset(&in, 0, sizeof(in));
+    in.R = R;
+    in.k = k;
+    in.sx = k * _w / 100.0;
+    in.sy = k * _h / 100.0;
+    in.ws = _wScale / 100.0;
+    in.smallK = _cSize / 100.0;
+    in.style = (int)_style;
+    in.n = (int)MIN(_cards.count, (NSUInteger)COC_MAXW);
 
-    // Квадрат виджета как на скринах ColorOS: ~19% ширины области
+    if (_style == 3) {
+        in.date = [_dateL sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)];
+        in.weather = _weatherL.attributedText.length ? [_weatherL sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)] : CGSizeZero;
+    } else {
+        in.date = [_dateL sizeThatFits:CGSizeMake(MAX(u * 0.5, 80), CGFLOAT_MAX)];
+    }
+    in.dateS = [_dateS sizeThatFits:CGSizeMake(MAX(u * 0.5, 80), CGFLOAT_MAX)];
+    COCComputeLayout(&in, &_E, &_C);
+    _hasLayout = YES;
+}
+
+// Ставит все элементы в положение, соответствующее прогрессу p (0 — развёрнуто, 1 — малые часы).
+- (void)applyProgress:(CGFloat)p {
+    if (!_hasLayout) return;
+    NSInteger n = (NSInteger)MIN(_cards.count, (NSUInteger)COC_MAXW);
+    COCFrame f;
+    COCInterpolate(&_E, &_C, (int)_style, (int)n, p, &f);
+
+    CGFloat op = _op / 100.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    _hoursV.frame = f.hours;
+    _minsV.frame = f.mins;
+    _hoursV.alpha = op;
+    _minsV.alpha = op;
+
+    _dateL.frame = f.date;
+    _dateL.alpha = op * f.dateA;
+    _dateL.hidden = (_dateL.alpha < 0.01);
+    BOOL w3 = (_style == 3) && _weatherL.attributedText.length > 0;
+    _weatherL.frame = f.weather;
+    _weatherL.alpha = op * f.weatherA;
+    _weatherL.hidden = !w3 || (_weatherL.alpha < 0.01);
+    _dateS.frame = f.dateS;
+    _dateS.alpha = op * f.dateSA;
+    _dateS.hidden = (_dateS.alpha < 0.01);
+
     CGFloat ws = _wScale / 100.0;
-    CGFloat sq = 0.19 * u * ws;
-    CGFloat colGap = MAX(8, sq * 0.18);
+    for (NSInteger i = 0; i < n; i++) {
+        COCWidgetCard *c = _cards[i];
+        CGRect r = f.card[i];
+        c.frame = r;
+        CGFloat sc = _E.sq > 0 ? r.size.width / _E.sq : 1;
+        c.layer.cornerRadius = MIN(_wRad * ws * sc, r.size.width / 2.0);
+    }
+    [CATransaction commit];
+}
 
-    CGRect dr;
-    _weatherL.hidden = (_style != 3);
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self rebuildLayout];
+    [self applyProgress:_prog];
+    if (_dbg) [self bringSubviewToFront:_dbg];
+}
 
-    if (_style == 3) {
-        // Вариант 3: строка «дата — погода», 0851 во всю ширину, виджеты под цифрами
-        [_dateL sizeToFit];
-        [_weatherL sizeToFit];
-        CGSize ds = _dateL.bounds.size, wsz = _weatherL.bounds.size;
-        CGFloat rowH = MAX(ds.height, wsz.height);
-        _dateL.frame = CGRectMake(R.origin.x, R.origin.y, ds.width, ds.height);
-        _weatherL.frame = CGRectMake(CGRectGetMaxX(R) - wsz.width, R.origin.y, wsz.width, wsz.height);
-        dr = CGRectMake(R.origin.x, R.origin.y + rowH + 14, u * sx, u * COCAspect(4, 1, COC_STRETCH_FULL) * sy);
+#pragma mark Привод анимации
+
+- (void)wake {
+    _activeUntil = CACurrentMediaTime() + 0.8;
+    if (_link) _link.preferredFramesPerSecond = 0;
+    else [self syncLink];
+}
+
+// Включает/выключает CADisplayLink в зависимости от того, нужен ли он сейчас.
+- (void)syncLink {
+    BOOL need = self.window && _enabled && (_cEnabled || _cForce);
+    if (need && !_link) {
+        COCLinkProxy *proxy = [[COCLinkProxy alloc] initWithTarget:self];
+        _link = [CADisplayLink displayLinkWithTarget:proxy selector:@selector(fire:)];
+        [_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        _lastTS = 0;
+        _activeUntil = CACurrentMediaTime() + 1.0;
+    } else if (!need && _link) {
+        [_link invalidate];
+        _link = nil;
+        _lastTS = 0;
+    }
+    if (!need && _prog != 0) {
+        _prog = 0; _vel = 0; _target = 0;
+        [self applyProgress:0];
+    }
+    if (!need && _dbg) _dbg.hidden = YES;
+}
+
+// Цель сжатия по геометрии ячеек уведомлений на экране. Возвращает прогресс 0…1 и признак,
+// что список сейчас ведёт палец (касание, перетаскивание или инерция прокрутки).
+- (void)measureTarget:(CGFloat *)target interactive:(BOOL *)inter {
+    *target = 0;
+    *inter = NO;
+    UIWindow *win = self.window;
+    if (!win) return;
+    CGFloat H = win.bounds.size.height;
+    if (H < 100) H = self.bounds.size.height;
+
+    UIView *hint = COCListHint;
+    NSArray<UIView *> *cells;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (hint && hint.window == win) {
+        NSMutableArray *found = [NSMutableArray array];
+        int budget = 600;
+        if (COCIsNotifCell(hint)) [found addObject:hint];
+        else COCCollectCells(hint, 0, &budget, self, found);
+        cells = found;
+        _src = @"list";
     } else {
-        if (_style == 1) {
-            // Вариант 1: вертикальные цифры слева (08 над 51)
-            CGFloat bw = u * 0.36;
-            CGFloat bh = bw * COCAspect(2, 2, COC_STRETCH_FULL);
-            dr = CGRectMake(R.origin.x, R.origin.y, bw * sx, bh * sy);
-        } else {
-            // Вариант 2: компактное 0851 (~68% ширины)
-            CGFloat bw = u * 0.68;
-            dr = CGRectMake(R.origin.x, R.origin.y, bw * sx, bw * COCAspect(4, 1, COC_STRETCH_COMPACT) * sy);
+        // Подсказки нет — сканируем всё окно, но не чаще 4 раз в секунду (в покое)
+        BOOL stale = (now - _lastScan) > (now < _activeUntil ? 0.12 : 0.25);
+        if (stale) {
+            _lastScan = now;
+            NSMutableArray *found = [NSMutableArray array];
+            int budget = 2500;
+            COCCollectCells(win, 0, &budget, self, found);
+            _cells = found;
         }
-        // Дата тремя строками под цифрами
-        CGSize ds = [_dateL sizeThatFits:CGSizeMake(MAX(u * 0.5, 80), CGFLOAT_MAX)];
-        _dateL.frame = CGRectMake(R.origin.x, CGRectGetMaxY(dr) + 12, ds.width, ds.height);
+        cells = _cells;
+        _src = @"window";
     }
 
-    _digits.frame = COCOutsetFrame(dr, (_style == 1) ? 2 : 4, (_style == 1) ? 2 : 1);
-    _digits.alpha = _op / 100.0;
-    _dateL.alpha = _op / 100.0;
-    _weatherL.alpha = _op / 100.0;
+    CGFloat top = CGFLOAT_MAX;
+    NSInteger count = 0;
+    for (UIView *c in cells) {
+        if (!c.window) continue;
+        CGRect r; CGFloat a;
+        if (!COCPresentedRect(c, win.layer, &r, &a)) continue;
+        if (a < 0.05 || r.size.height < 20) continue;
+        if (r.origin.y >= H - 1 || CGRectGetMaxY(r) <= 0) continue;
+        count++;
+        if (r.origin.y < top) top = r.origin.y;
 
-    // Карточки
-    NSUInteger n = _cards.count;
-    CGFloat radius = MIN(_wRad * ws, sq / 2.0);
-    for (COCWidgetCard *c in _cards) {
-        c.fillAlpha = _wOp / 100.0 * 0.5;
-        c.layer.cornerRadius = radius;
-        if (@available(iOS 13.0, *)) c.layer.cornerCurve = kCACornerCurveContinuous;
+        UIView *p = c.superview;
+        while (p && ![p isKindOfClass:[UIScrollView class]]) p = p.superview;
+        UIScrollView *sv = (UIScrollView *)p;
+        if (sv && (sv.isTracking || sv.isDragging || sv.isDecelerating)) *inter = YES;
     }
-    if (n == 0) return;
+    _cellCount = count;
+    _topSeen = (count > 0) ? top : -1;
+    if (count > 0) *target = COCCollapseTarget(top, H, _cDist);
+}
 
-    if (_style == 3) {
-        // Ряд под цифрами: 1 — слева, 2 — по краям, 3+ — равномерно
-        CGFloat y = CGRectGetMaxY(dr) + u * 0.07;
-        for (NSUInteger i = 0; i < n; i++) {
-            CGFloat x = (n == 1) ? R.origin.x : R.origin.x + i * (u - sq) / (n - 1);
-            _cards[i].frame = CGRectMake(x, y, sq, sq);
-        }
+- (void)displayTick:(CADisplayLink *)link {
+    if (!self.window) { [self syncLink]; return; }
+    CFTimeInterval ts = link.timestamp;
+    CFTimeInterval dt = (_lastTS > 0) ? ts - _lastTS : 0;
+    BOOL first = (_lastTS <= 0) || dt > 1.0;
+    _lastTS = ts;
+    if (dt > 0.1) dt = 0.1;
+
+    CGFloat target = 0;
+    BOOL inter = NO;
+    [self measureTarget:&target interactive:&inter];
+    if (_cForce) target = 1;
+    if (!_cEnabled && !_cForce) target = 0;
+    _target = target;
+    _inter = inter;
+
+    CGFloat before = _prog;
+    if (first || inter) {
+        // Первый показ — без анимации; когда список ведёт палец — следуем точно за ним
+        _prog = target;
+        _vel = 0;
     } else {
-        // Колонка квадратов у правого края
-        CGFloat x = CGRectGetMaxX(R) - sq;
-        CGFloat y = R.origin.y;
-        for (COCWidgetCard *c in _cards) {
-            c.frame = CGRectMake(x, y, sq, sq);
-            y += sq + colGap;
+        // Критически демпфированная пружина: мягкий разгон и посадка без перелёта (~0.6 с)
+        CGFloat om = 10.0 * _cSpeed / 100.0;
+        int steps = MAX(1, (int)ceil(dt * 120.0));
+        CGFloat h = dt / steps;
+        for (int i = 0; i < steps; i++) {
+            CGFloat a = -2 * om * _vel - om * om * (_prog - target);
+            _vel += a * h;
+            _prog += _vel * h;
         }
+        if (fabs(_prog - target) < 0.0004 && fabs(_vel) < 0.002) { _prog = target; _vel = 0; }
+        _prog = COCClamp01(_prog);
     }
+    if (first || fabs(_prog - before) > 1e-5) [self applyProgress:_prog];
+
+    // В покое опрашиваем реже, при движении — на полной частоте
+    CFTimeInterval now = CACurrentMediaTime();
+    if (inter || fabs(_prog - _target) > 0.0004 || fabs(_vel) > 0.001) _activeUntil = now + 0.5;
+    NSInteger fps = (now < _activeUntil) ? 0 : 15;
+    if (link.preferredFramesPerSecond != fps) link.preferredFramesPerSecond = fps;
+
+    [self updateDebug];
+}
+
+- (void)updateDebug {
+    if (!_debug) { _dbg.hidden = YES; return; }
+    if (!_dbg) {
+        _dbg = [[UILabel alloc] init];
+        _dbg.numberOfLines = 2;
+        _dbg.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+        _dbg.textColor = [UIColor greenColor];
+        _dbg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+        [self addSubview:_dbg];
+    }
+    _dbg.hidden = NO;
+    _dbg.text = [NSString stringWithFormat:@"cells %ld  top %.0f  src %@\nprog %.2f  tgt %.2f  %@",
+                 (long)_cellCount, _topSeen, _src ?: @"-", _prog, _target, _inter ? @"FINGER" : @"spring"];
+    _dbg.frame = CGRectMake(8, 44, MIN(self.bounds.size.width - 16, 260), 30);
+    [self bringSubviewToFront:_dbg];
 }
 
 @end

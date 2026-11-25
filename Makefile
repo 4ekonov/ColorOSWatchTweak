@@ -11,7 +11,7 @@ TWEAK_NAME = ColorOSClock
 
 ColorOSClock_FILES = Tweak.xm COCClockView.m
 ColorOSClock_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
-ColorOSClock_FRAMEWORKS = UIKit CoreText
+ColorOSClock_FRAMEWORKS = UIKit CoreText QuartzCore
 
 SUBPROJECTS += ColorOSClockPrefs
 

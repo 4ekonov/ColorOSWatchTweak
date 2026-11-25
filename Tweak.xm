@@ -20,6 +20,11 @@ static BOOL COCEnabled(void) {
     return COCB(@"enabled", YES);
 }
 
+// Разбудить привод анимации часов (список уведомлений поменялся / экран показан)
+static void COCPoke(void) {
+    for (COCClockView *v in COCClocks.allObjects) [v wake];
+}
+
 #pragma mark - Установка наших часов
 
 static void COCInstall(UIView *host) {
@@ -43,6 +48,14 @@ static void COCInstall(UIView *host) {
 %end
 %end
 
+// Экран блокировки показывается — часы должны проснуться и сразу встать в нужное состояние
+%hook CSCoverSheetViewController
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    COCPoke();
+}
+%end
+
 // Запасной вариант, если класса главной страницы нет
 %group Fallback
 %hook CSCoverSheetViewController
@@ -59,6 +72,12 @@ static void COCInstall(UIView *host) {
 - (void)viewDidLoad {
     %orig;
     [COCLists addObject:self];
+    // Подсказка часам, где искать ячейки уведомлений
+    [COCClockView registerListView:self.view];
+}
+- (void)viewDidLayoutSubviews {
+    %orig;
+    COCPoke();
 }
 - (UIEdgeInsets)_listViewDefaultContentInsets {
     UIEdgeInsets i = %orig;

@@ -435,6 +435,136 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Пока на экране блокировки есть уведомление, часы уменьшаются, а при вытягивании истории уведомлений пальцем сжатие идёт вместе с пальцем.</string>
+			<key>label</key>
+			<string>Малые часы при уведомлениях</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>collapseEnabled</string>
+			<key>label</key>
+			<string>Уменьшать часы при уведомлениях</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Размер малых часов</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>100.0</real>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>collapseSize</string>
+			<key>max</key>
+			<real>200.0</real>
+			<key>min</key>
+			<real>40.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Плавность (скорость анимации, %)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>100.0</real>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>collapseSpeed</string>
+			<key>max</key>
+			<real>300.0</real>
+			<key>min</key>
+			<real>30.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Путь сжатия при вытягивании (pt)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>140.0</real>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>collapseDistance</string>
+			<key>max</key>
+			<real>600.0</real>
+			<key>min</key>
+			<real>40.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Если часы не сжимаются: включи «Отладочную строку» — вверху экрана блокировки будет видно, сколько ячеек уведомлений найдено. «Всегда малые» — для проверки раскладки без уведомлений.</string>
+			<key>label</key>
+			<string>Отладка</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>collapseForce</string>
+			<key>label</key>
+			<string>Всегда малые (проверка)</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>debugOverlay</string>
+			<key>label</key>
+			<string>Отладочная строка</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Виджеты</string>
 		</dict>
