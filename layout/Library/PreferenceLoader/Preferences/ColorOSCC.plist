@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>entry</key>
+  <dict>
+    <key>cell</key><string>PSLinkCell</string>
+    <key>label</key><string>ColorOSCC</string>
+  </dict>
+  <key>title</key><string>ColorOSCC</string>
+  <key>items</key>
+  <array>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Масштаб шторки</string>
+      <key>footerText</key><string>Больше — крупнее вся шторка. Ничем не ограничено: если шторка выше экрана, её можно прокрутить. Применяется при следующем открытии шторки.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSliderCell</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>shadeScale</string>
+      <key>default</key><real>1.1</real>
+      <key>min</key><real>0.6</real>
+      <key>max</key><real>1.6</real>
+      <key>showValue</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Размер круглых кнопок</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSliderCell</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>buttonScale</string>
+      <key>default</key><real>1.25</real>
+      <key>min</key><real>0.8</real>
+      <key>max</key><real>1.7</real>
+      <key>showValue</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Подписи под кнопками</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>showLabels</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Жесты</string>
+      <key>footerText</key><string>Свайп вниз от правой половины верхнего края открывает шторку с кнопками, от левой — стандартные уведомления. Применяется после респринга.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Шторка свайпом сверху справа</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>topRightGesture</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Отключить стандартный жест снизу</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>disableBottomGesture</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>footerText</key><string>Показывает красную полосу в зоне жеста (правая половина верха экрана). Если при свайпе она ярко вспыхивает — зона получает касания. Выключи, когда всё заработает.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Отладка жеста (красная полоса)</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>debugStrip</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Устройство</string>
+      <key>footerText</key><string>Авто: на iPhone с кнопкой «Домой» шторка выезжает снизу (стандартный жест), на iPhone с чёлкой — сверху справа. Применяется после респринга.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSLinkListCell</string>
+      <key>label</key><string>Откуда выезжает шторка</string>
+      <key>detail</key><string>PSListItemsController</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>shadeEdge</string>
+      <key>default</key><string>auto</string>
+      <key>validTitles</key><array><string>Авто</string><string>Сверху</string><string>Снизу</string></array>
+      <key>validValues</key><array><string>auto</string><string>top</string><string>bottom</string></array>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Уведомления</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Тёмный стиль стандартных карточек (если своя панель выключена)</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>styleNotifications</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Своя панель уведомлений (стиль ColorOS)</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>customNotifications</string>
+      <key>default</key><true/>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -1,9 +1,9 @@
-Package: com.coloros.clocktweak
-Name: ColorOS Clock
-Depends: mobilesubstrate, preferenceloader, firmware (>= 15.0)
-Version: 0.7.0
+Package: com.opcc.coloroscc
+Name: ColorOSCC
+Version: 1.1.0
 Architecture: iphoneos-arm
-Description: ColorOS-style lock screen clock with widgets and notification offsets
+Description: Центр управления в стиле ColorOS 16 для iOS 15-17 (rootless)
 Maintainer: you
 Author: you
 Section: Tweaks
+Depends: mobilesubstrate, preferenceloader
