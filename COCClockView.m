@@ -1032,7 +1032,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         for (UIButton *b in @[ _cancel, _done, _reset, _ratio ]) [self addSubview:b];
 
         _title = [[UILabel alloc] init];
-        _title.text = @"Экран блокировки";
+        _title.text = @"Экран блокировки · v0.9";
         _title.textColor = [UIColor whiteColor];
         _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_title sizeToFit];
@@ -1185,7 +1185,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     // Редактор размера и положения
     BOOL _editing;
     COCEditorView *_editor;
-    __weak UILongPressGestureRecognizer *_lp;
+    UILongPressGestureRecognizer *_lp;
     CGFloat _sess[5];        // size, width, height, offsetX, offsetY на момент входа в редактор
     CGFloat _snap[5];        // то же перед текущим жестом
     CGRect _snapFrame;
@@ -1234,8 +1234,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_timer invalidate];
     [_link invalidate];
-    UILongPressGestureRecognizer *lp = _lp;
-    [lp.view removeGestureRecognizer:lp];
+    [_lp.view removeGestureRecognizer:_lp];
 }
 
 // Часы не перехватывают касания: свайпы, камера, фонарик работают как обычно.
@@ -1246,6 +1245,8 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     if (!self.window && _editing) [self endEditingSave:NO];
+    if (self.window) [self attachLongPress];
+    else if (_lp) { [_lp.view removeGestureRecognizer:_lp]; _lp = nil; }
     [_timer invalidate];
     _timer = nil;
     if (self.window) {
@@ -1580,30 +1581,39 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     }
 }
 
+// Долгое нажатие вешаем на окно, а не на страницу: тогда его не перехватывают другие вьюхи
+// экрана блокировки. Срабатывает только в области самих часов (см. gestureRecognizerShouldBegin).
 - (void)installLongPressOn:(UIView *)host {
-    if (_lp || !host) return;
+    [self attachLongPress];
+}
+
+- (void)attachLongPress {
+    UIWindow *w = self.window;
+    if (!w) return;
+    if (_lp && _lp.view == w) return;
+    if (_lp) [_lp.view removeGestureRecognizer:_lp];
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self
                                                                                      action:@selector(handleLongPress:)];
     lp.minimumPressDuration = 0.4;
     lp.allowableMovement = 14;
     lp.cancelsTouchesInView = NO;
     lp.delegate = self;
-    [host addGestureRecognizer:lp];
+    [w addGestureRecognizer:lp];
     _lp = lp;
+}
+
+// Зона нажатия: цифры и дата в том виде, в каком они сейчас на экране (развёрнутые или малые)
+- (CGRect)clockTouchZone {
+    CGRect r = CGRectUnion(_hoursV.frame, _minsV.frame);
+    if (!_dateL.hidden) r = CGRectUnion(r, _dateL.frame);
+    if (!_dateS.hidden) r = CGRectUnion(r, _dateS.frame);
+    return CGRectInset(r, -20, -20);
 }
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
     if (g != _lp) return [super gestureRecognizerShouldBegin:g];
     if (!_enabled || _editing || self.hidden || !self.window) return NO;
-    UIView *host = g.view;
-    CGPoint p = [g locationInView:host];
-    // Низ экрана (фонарик, камера) и сами уведомления — не наша зона
-    if (p.y > host.bounds.size.height - 170) return NO;
-    UIView *hit = [host hitTest:p withEvent:nil];
-    for (UIView *v = hit; v && v != host; v = v.superview) {
-        if (COCIsNotifCell(v)) return NO;
-    }
-    return YES;
+    return CGRectContainsPoint([self clockTouchZone], [g locationInView:self]);
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)o {
