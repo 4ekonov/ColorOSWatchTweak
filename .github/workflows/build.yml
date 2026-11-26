@@ -3,11 +3,7 @@ name: Build deb
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -18,19 +14,18 @@ jobs:
       - name: Install Theos + SDK
         uses: Randomblock1/theos-action@v1
 
-      - name: Build rootful deb
-        run: make clean package FINALPACKAGE=1
+      - name: Build rootless deb (Dopamine / palera1n rootless)
+        run: |
+          chmod 755 layout/DEBIAN/postinst
+          make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-      - name: Build rootless deb
-        run: make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+      - name: Show result
+        run: |
+          ls -la packages
+          for f in packages/*.deb; do dpkg-deb -I "$f" || true; done
 
+      # Номер сборки в имени артефакта — всегда видно, какой запуск свежий
       - uses: actions/upload-artifact@v4
         with:
-          name: ColorOSClock-deb
+          name: ColorOSClock-deb-${{ github.run_number }}
           path: packages/*.deb
-
-      - name: Attach to Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: packages/*.deb
