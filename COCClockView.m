@@ -1032,7 +1032,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         for (UIButton *b in @[ _cancel, _done, _reset, _ratio ]) [self addSubview:b];
 
         _title = [[UILabel alloc] init];
-        _title.text = @"Экран блокировки · v0.9";
+        _title.text = @"Экран блокировки · v0.9.1";
         _title.textColor = [UIColor whiteColor];
         _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_title sizeToFit];

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Перезапуск SpringBoard в конце установки/обновления, чтобы новая версия сразу загрузилась.
+# Запускаем в фоне, чтобы dpkg успел спокойно завершиться.
+(
+    sleep 1
+    for p in /var/jb/usr/bin/sbreload /usr/bin/sbreload; do
+        if [ -x "$p" ]; then "$p"; exit 0; fi
+    done
+    for p in /var/jb/usr/bin/killall /usr/bin/killall; do
+        if [ -x "$p" ]; then "$p" -9 SpringBoard; exit 0; fi
+    done
+) >/dev/null 2>&1 &
+exit 0

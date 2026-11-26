@@ -7,6 +7,10 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
+# GitHub при загрузке файлов через браузер теряет права на запуск — выставляем их сами,
+# иначе dpkg отклонит скрипт postinst (респринг после установки).
+_COC_FIXPERM := $(shell chmod 0755 layout/DEBIAN/postinst 2>/dev/null)
+
 TWEAK_NAME = ColorOSClock
 
 ColorOSClock_FILES = Tweak.xm COCClockView.m
