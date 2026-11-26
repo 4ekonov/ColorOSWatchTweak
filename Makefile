@@ -11,6 +11,10 @@ include $(THEOS)/makefiles/common.mk
 # иначе dpkg отклонит скрипт postinst (респринг после установки).
 _COC_FIXPERM := $(shell chmod 0755 layout/DEBIAN/postinst 2>/dev/null)
 
+# В репозитории могут оставаться чужие файлы от других проектов (например, ColorOSCC.plist от другого твика —
+# из-за него dpkg отказывается ставить пакет). В layout/ оставляем только то, что принадлежит этому твику.
+_COC_CLEAN := $(shell find layout -type f ! -path 'layout/DEBIAN/postinst' ! -path 'layout/Library/PreferenceLoader/Preferences/ColorOSClock.plist' -delete 2>/dev/null)
+
 TWEAK_NAME = ColorOSClock
 
 ColorOSClock_FILES = Tweak.xm COCClockView.m

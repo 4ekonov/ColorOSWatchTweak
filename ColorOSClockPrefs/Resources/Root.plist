@@ -10,7 +10,7 @@
 			<key>footerText</key>
 			<string>Размер и положение часов: долгое нажатие на самих часах на экране блокировки → тяни рамку (положение) и уголок (размер).</string>
 			<key>label</key>
-			<string>Основное · v0.9.1</string>
+			<string>Основное · v0.9.2</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
