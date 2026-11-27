@@ -236,7 +236,8 @@ static const COCRing *COCRingsFor(unichar ch, int *count) {
 #define COC_STRETCH_COMPACT 1.60
 #define COC_STRETCH_SMALL 2.10
 
-#define COC_MAXW 8
+#define COC_MAXW 12
+#define COC_TYPES 11   // число типов виджетов
 
 static inline CGFloat COCBlockW(NSUInteger m) { return (m - 1) * COC_PITCH + COC_BW; }
 static inline CGFloat COCBlockH(NSUInteger n) { return n * COC_CH + (n - 1) * COC_LINEGAP; }
@@ -292,6 +293,7 @@ typedef struct {
     CGSize date;         // развёрнутая дата (1 и 2: три строки, 3: одна строка)
     CGSize weather;      // погода справа в строке даты (вариант 3)
     CGSize dateS;        // малая дата справа (три строки)
+    int lng[COC_MAXW];   // 1 — виджет «длинный» (2 клетки в ширину); в варианте 2 игнорируется
 } COCLayoutIn;
 
 typedef struct {
@@ -301,6 +303,35 @@ typedef struct {
     CGFloat sq;                  // сторона квадрата
     CGFloat bottom;              // нижняя граница всего блока
 } COCLayoutOut;
+
+// ---- Сетка виджетов: малый = 1 клетка, длинный = 2 клетки в ширину -------------------
+// Вариант 2 («компактные, виджеты сбоку») длинных виджетов не знает: всегда квадраты.
+static inline int COCSpanOf(int style, int lng) { return (style != 2 && lng) ? 2 : 1; }
+
+// Раскладка по клеткам слева направо, строка за строкой (не влезло — на новую строку).
+// Возвращает число строк.
+static int COCGridPlace(const int *span, int n, int cols, int *col, int *row) {
+    int c = 0, r = 0;
+    for (int i = 0; i < n; i++) {
+        int s = span[i] > cols ? cols : span[i];
+        if (c + s > cols) { c = 0; r++; }
+        col[i] = c; row[i] = r;
+        c += s;
+    }
+    return n ? r + 1 : 0;
+}
+
+// Помещаются ли первые n виджетов: вариант 1 — колонка до 6, вариант 2 — до 5 квадратов,
+// вариант 3 — две строки по 4 клетки.
+static int COCFitsN(int style, const int *lng, int n) {
+    if (n <= 0) return 1;
+    if (n > COC_MAXW) return 0;
+    if (style == 2) return n <= 5;
+    if (style == 1) return n <= 6;
+    int span[COC_MAXW], col[COC_MAXW], row[COC_MAXW];
+    for (int i = 0; i < n; i++) span[i] = COCSpanOf(3, lng[i]);
+    return COCGridPlace(span, n, 4, col, row) <= 2;
+}
 
 static void COCLayoutExpanded(const COCLayoutIn *in, COCLayoutOut *o) {
     CGRect R = in->R;
@@ -340,22 +371,45 @@ static void COCLayoutExpanded(const COCLayoutIn *in, COCLayoutOut *o) {
     o->hours = COCPairFrame(o->hours);
     o->mins = COCPairFrame(o->mins);
 
+    int nn = in->n < COC_MAXW ? in->n : COC_MAXW;
+    int span[COC_MAXW], gc[COC_MAXW], gr[COC_MAXW];
+    for (int i = 0; i < nn; i++) span[i] = COCSpanOf(in->style, in->lng[i]);
+
+    if (in->style == 3) {
+        // Сетка 4 колонки × 2 ряда под цифрами: малый — 1 клетка, длинный — 2
+        CGFloat sq = 0.216 * u * in->ws;
+        if (4 * sq + 3 * 8 > u) sq = (u - 24) / 4;
+        CGFloat g = MAX(8, MIN((u - 4 * sq) / 3, 0.06 * u));
+        o->sq = sq;
+        COCGridPlace(span, nn, 4, gc, gr);
+        CGFloat y0 = CGRectGetMaxY(dr) + u * 0.07;
+        CGFloat bottom = MAX(CGRectGetMaxY(dr), CGRectGetMaxY(o->date));
+        for (int i = 0; i < nn; i++) {
+            CGFloat w = span[i] * sq + (span[i] - 1) * g;
+            CGFloat x = R.origin.x + gc[i] * (sq + g);
+            CGFloat y = y0 + gr[i] * (sq + g);
+            o->card[i] = CGRectMake(x, y, w, sq);
+            bottom = MAX(bottom, y + sq);
+        }
+        o->bottom = bottom;
+        return;
+    }
+
     CGFloat sq = 0.19 * u * in->ws;
     CGFloat colGap = MAX(8, sq * 0.18);
     o->sq = sq;
     CGFloat bottom = MAX(CGRectGetMaxY(dr), CGRectGetMaxY(o->date));
-    for (int i = 0; i < in->n && i < COC_MAXW; i++) {
-        CGFloat x, y;
-        if (in->style == 3) {
-            // Ряд под цифрами: 1 — слева, 2 — по краям, 3+ — равномерно
-            y = CGRectGetMaxY(dr) + u * 0.07;
-            x = (in->n == 1) ? R.origin.x : R.origin.x + i * (u - sq) / (in->n - 1);
-        } else {
-            // Колонка квадратов у правого края
-            x = CGRectGetMaxX(R) - sq;
-            y = R.origin.y + i * (sq + colGap);
+    for (int i = 0; i < nn; i++) {
+        CGFloat w = sq;
+        if (span[i] == 2) {
+            // Вариант 1: длинный виджет тянется влево от правого края, но не заезжает на цифры
+            w = 2 * sq + colGap;
+            CGFloat avail = CGRectGetMaxX(R) - (CGRectGetMaxX(dr) + 12);
+            if (w > avail) w = MAX(sq, avail);
         }
-        o->card[i] = CGRectMake(x, y, sq, sq);
+        CGFloat x = CGRectGetMaxX(R) - w;
+        CGFloat y = R.origin.y + i * (sq + colGap);
+        o->card[i] = CGRectMake(x, y, w, sq);
         bottom = MAX(bottom, y + sq);
     }
     o->bottom = bottom;
@@ -378,6 +432,27 @@ static void COCLayoutCollapsed(const COCLayoutIn *in, COCLayoutOut *o, CGFloat s
 
     CGFloat sq = sqExpanded;
     int n = in->n < COC_MAXW ? in->n : COC_MAXW;
+
+    if (in->style != 2) {
+        // Варианты 1 и 3: та же сетка 4 колонки, малые и длинные виджеты, при нехватке — вторая строка
+        int span[COC_MAXW], gc[COC_MAXW], gr[COC_MAXW];
+        for (int i = 0; i < n; i++) span[i] = COCSpanOf(in->style, in->lng[i]);
+        if (4 * sq + 3 * 8 > u) sq = (u - 24) / 4;
+        CGFloat g = MAX(8, MIN(16, (u - 4 * sq) / 3));
+        o->sq = sq;
+        COCGridPlace(span, n, 4, gc, gr);
+        CGFloat y0 = CGRectGetMaxY(dr) + 20;
+        CGFloat bottom = MAX(CGRectGetMaxY(dr), CGRectGetMaxY(o->dateS));
+        for (int i = 0; i < n; i++) {
+            CGFloat w = span[i] * sq + (span[i] - 1) * g;
+            CGFloat y = y0 + gr[i] * (sq + g);
+            o->card[i] = CGRectMake(R.origin.x + gc[i] * (sq + g), y, w, sq);
+            bottom = MAX(bottom, y + sq);
+        }
+        o->bottom = bottom;
+        return;
+    }
+
     if (n > 0 && n * sq + (n - 1) * 8 > u) sq = (u - (n - 1) * 8) / n;
     o->sq = sq;
     CGFloat gapH = (n > 1) ? MIN(16, (u - n * sq) / (n - 1)) : 0;
@@ -467,7 +542,7 @@ static void COCInterpolate(const COCLayoutOut *E, const COCLayoutOut *C, int sty
     f->dateSA = COCSmooth(COCWin(p, c->dIn0, 1.0));
 
     for (int i = 0; i < n && i < COC_MAXW; i++) {
-        COCAxes(p, c->c0 + i * c->cs, 1.0, c->cx0, c->cx1, c->cy0, c->cy1, &tx, &ty);
+        COCAxes(p, MIN(c->c0 + i * c->cs, 0.9), 1.0, c->cx0, c->cx1, c->cy0, c->cy1, &tx, &ty);
         f->card[i] = COCMixRect(E->card[i], C->card[i], tx, ty);
     }
 }
@@ -579,18 +654,21 @@ static CGPathRef COCGlyphPath(unichar ch) {
 
 @end
 
-#pragma mark - Карточка виджета (квадрат, прозрачная заливка без размытия)
+#pragma mark - Карточка виджета (квадрат или «длинная», прозрачная заливка без размытия)
 
 @interface COCWidgetCard : UIView
 @property (nonatomic, strong) UIImageView *iconView;
 @property (nonatomic, strong) UILabel *valueLabel;
+@property (nonatomic, strong) UILabel *titleLabel;   // справа от иконки, видно только в длинном виде
+@property (nonatomic, strong) UILabel *subLabel;     // справа внизу, видно только в длинном виде
 @property (nonatomic, copy) NSString *symbol;
 @property (nonatomic, assign) CGFloat fillAlpha;
-- (void)setSymbol:(NSString *)symbol value:(NSString *)value;
+- (void)setSymbol:(NSString *)symbol value:(NSString *)value title:(NSString *)title sub:(NSString *)sub;
 @end
 
 @implementation COCWidgetCard {
-    CGFloat _lastW;
+    CGFloat _lastS;
+    NSString *_shownSymbol;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -609,6 +687,22 @@ static CGPathRef COCGlyphPath(unichar ch) {
         _valueLabel.minimumScaleFactor = 0.5;
         [self addSubview:_valueLabel];
 
+        _titleLabel = [[UILabel alloc] init];
+        _titleLabel.textColor = [UIColor colorWithWhite:1 alpha:0.78];
+        _titleLabel.adjustsFontSizeToFitWidth = YES;
+        _titleLabel.minimumScaleFactor = 0.6;
+        _titleLabel.alpha = 0;
+        [self addSubview:_titleLabel];
+
+        _subLabel = [[UILabel alloc] init];
+        _subLabel.textColor = [UIColor colorWithWhite:1 alpha:0.78];
+        _subLabel.textAlignment = NSTextAlignmentRight;
+        _subLabel.numberOfLines = 2;
+        _subLabel.adjustsFontSizeToFitWidth = YES;
+        _subLabel.minimumScaleFactor = 0.6;
+        _subLabel.alpha = 0;
+        [self addSubview:_subLabel];
+
         self.fillAlpha = 0.1;
     }
     return self;
@@ -620,10 +714,13 @@ static CGPathRef COCGlyphPath(unichar ch) {
     self.backgroundColor = [UIColor colorWithWhite:1 alpha:fillAlpha];
 }
 
-- (void)setSymbol:(NSString *)symbol value:(NSString *)value {
-    if ([_symbol isEqualToString:symbol] && [_valueLabel.text isEqualToString:value]) return;
+- (void)setSymbol:(NSString *)symbol value:(NSString *)value title:(NSString *)title sub:(NSString *)sub {
+    if ([_symbol isEqualToString:symbol] && [_valueLabel.text isEqualToString:value] &&
+        [_titleLabel.text isEqualToString:title] && [_subLabel.text isEqualToString:sub]) return;
     _symbol = [symbol copy];
     _valueLabel.text = value;
+    _titleLabel.text = title;
+    _subLabel.text = sub;
     _iconView.image = nil;
     [self setNeedsLayout];
 }
@@ -631,18 +728,36 @@ static CGPathRef COCGlyphPath(unichar ch) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
-    CGFloat pad = w * 0.17;
+    CGFloat s = MIN(w, h);                    // размеры считаем от стороны квадрата
+    CGFloat pad = s * 0.17;
 
-    // Иконка и шрифт зависят только от ширины — не пересоздаём их, пока размер не изменился
-    if (!_iconView.image || fabs(w - _lastW) > 0.5) {
-        _lastW = w;
+    // Иконка и шрифты зависят только от высоты — не пересоздаём, пока размер не изменился
+    if (!_iconView.image || fabs(s - _lastS) > 0.5) {
+        _lastS = s;
         UIImageSymbolConfiguration *cfg =
-            [UIImageSymbolConfiguration configurationWithPointSize:w * 0.30 weight:UIImageSymbolWeightMedium];
-        _iconView.image = _symbol ? [UIImage systemImageNamed:_symbol withConfiguration:cfg] : nil;
-        _valueLabel.font = COCRounded(w * 0.24, UIFontWeightSemibold);
+            [UIImageSymbolConfiguration configurationWithPointSize:s * 0.30 weight:UIImageSymbolWeightMedium];
+        UIImage *img = _symbol ? [UIImage systemImageNamed:_symbol withConfiguration:cfg] : nil;
+        if (!img && [_symbol hasPrefix:@"moonphase"]) img = [UIImage systemImageNamed:@"moon.fill" withConfiguration:cfg];
+        _iconView.image = img;
+        _valueLabel.font = COCRounded(s * 0.24, UIFontWeightSemibold);
+        _titleLabel.font = COCRounded(s * 0.15, UIFontWeightMedium);
+        _subLabel.font = COCRounded(s * 0.15, UIFontWeightMedium);
     }
-    _iconView.frame = CGRectMake(pad, pad, w - pad * 2, w * 0.36);
-    _valueLabel.frame = CGRectMake(pad, h - pad - w * 0.30, w - pad * 2, w * 0.30);
+
+    // 0 — квадрат, 1 — длинная; плавно, пока карточка тянется
+    CGFloat wide = COCClamp01((w / MAX(h, 1) - 1.25) / 0.5);
+    CGFloat inner = w - pad * 2;
+    CGFloat iconW = s * 0.36;
+    _iconView.frame = CGRectMake(pad, pad, MIN(iconW, inner), s * 0.36);
+    CGFloat vw = wide > 0.01 ? inner * 0.46 : inner;
+    _valueLabel.frame = CGRectMake(pad, h - pad - s * 0.30, MAX(vw, 10), s * 0.30);
+
+    CGFloat tx = pad + iconW + s * 0.06;
+    _titleLabel.frame = CGRectMake(tx, pad + s * 0.02, MAX(w - pad - tx, 10), s * 0.20);
+    CGFloat sx = pad + inner * 0.48;
+    _subLabel.frame = CGRectMake(sx, h - pad - s * 0.34, MAX(w - pad - sx, 10), s * 0.34);
+    _titleLabel.alpha = wide;
+    _subLabel.alpha = wide;
 }
 
 @end
@@ -657,6 +772,10 @@ static NSDate *COCWFetched = nil;
 static BOOL COCWBusy = NO;
 static NSString *COCWGeoCity = nil;
 static double COCWLat = 0, COCWLon = 0;
+static double COCWMin = 0, COCWMax = 0;
+static BOOL COCWDaily = NO;
+static NSDate *COCWSunrise = nil, *COCWSunset = nil, *COCWSunriseNext = nil;
+static NSInteger COCWOffset = 0;                 // смещение часового пояса места, секунды
 
 static NSString *COCWeatherSymbol(int c) {
     if (c == 0) return @"sun.max.fill";
@@ -669,6 +788,35 @@ static NSString *COCWeatherSymbol(int c) {
     if (c >= 80 && c <= 82) return @"cloud.heavyrain.fill";
     if (c >= 95) return @"cloud.bolt.rain.fill";
     return @"cloud.fill";
+}
+
+// Описание погоды по коду WMO (для длинного виджета)
+static NSString *COCWeatherText(int c) {
+    if (c == 0) return @"Ясно";
+    if (c == 1) return @"Малооблачно";
+    if (c == 2) return @"Облачно";
+    if (c == 3) return @"Пасмурно";
+    if (c == 45 || c == 48) return @"Туман";
+    if (c >= 51 && c <= 57) return @"Морось";
+    if (c >= 61 && c <= 67) return @"Дождь";
+    if ((c >= 71 && c <= 77) || c == 85 || c == 86) return @"Снег";
+    if (c >= 80 && c <= 82) return @"Ливень";
+    if (c >= 95) return @"Гроза";
+    return @"Облачно";
+}
+
+// "2026-11-27T07:12" в часовом поясе места -> NSDate
+static NSDate *COCParseLocal(id str, NSInteger offset) {
+    if (![str isKindOfClass:[NSString class]]) return nil;
+    static NSDateFormatter *f = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        f = [[NSDateFormatter alloc] init];
+        f.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        f.dateFormat = @"yyyy-MM-dd'T'HH:mm";
+    });
+    f.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:offset];
+    return [f dateFromString:str];
 }
 
 static void COCWeatherRefresh(NSString *city) {
@@ -695,12 +843,31 @@ static void COCWeatherRefresh(NSString *city) {
     void (^forecast)(double, double) = ^(double lat, double lon) {
         NSString *u = [NSString stringWithFormat:
             @"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
-            @"&current=temperature_2m,weather_code&timezone=auto", lat, lon];
+            @"&current=temperature_2m,weather_code"
+            @"&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&forecast_days=2&timezone=auto",
+            lat, lon];
         NSURLSessionDataTask *t = [[NSURLSession sharedSession] dataTaskWithURL:[NSURL URLWithString:u]
             completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
                 NSDictionary *j = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
                 NSDictionary *cur = [j isKindOfClass:[NSDictionary class]] ? j[@"current"] : nil;
                 if ([cur isKindOfClass:[NSDictionary class]] && cur[@"temperature_2m"]) {
+                    // Дневные данные: мин/макс, восход и закат (если сервис их не вернул — виджеты покажут «—»)
+                    NSDictionary *dl = [j[@"daily"] isKindOfClass:[NSDictionary class]] ? j[@"daily"] : nil;
+                    NSInteger off = [j[@"utc_offset_seconds"] respondsToSelector:@selector(integerValue)]
+                                        ? [j[@"utc_offset_seconds"] integerValue] : 0;
+                    NSArray *mx = [dl[@"temperature_2m_max"] isKindOfClass:[NSArray class]] ? dl[@"temperature_2m_max"] : nil;
+                    NSArray *mn = [dl[@"temperature_2m_min"] isKindOfClass:[NSArray class]] ? dl[@"temperature_2m_min"] : nil;
+                    NSArray *sr = [dl[@"sunrise"] isKindOfClass:[NSArray class]] ? dl[@"sunrise"] : nil;
+                    NSArray *ss = [dl[@"sunset"] isKindOfClass:[NSArray class]] ? dl[@"sunset"] : nil;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        COCWDaily = (mx.count > 0 && mn.count > 0 && [mx[0] isKindOfClass:[NSNumber class]]
+                                     && [mn[0] isKindOfClass:[NSNumber class]]);
+                        if (COCWDaily) { COCWMax = [mx[0] doubleValue]; COCWMin = [mn[0] doubleValue]; }
+                        COCWOffset = off;
+                        COCWSunrise = sr.count > 0 ? COCParseLocal(sr[0], off) : nil;
+                        COCWSunset = ss.count > 0 ? COCParseLocal(ss[0], off) : nil;
+                        COCWSunriseNext = sr.count > 1 ? COCParseLocal(sr[1], off) : nil;
+                    });
                     finish(YES, [cur[@"temperature_2m"] doubleValue], [cur[@"weather_code"] intValue], lat, lon);
                 } else {
                     finish(NO, 0, 0, 0, 0);
@@ -779,7 +946,37 @@ typedef NS_ENUM(NSInteger, COCWidgetType) {
     COCWidgetBattery,
     COCWidgetDate,
     COCWidgetText,
+    COCWidgetStorage,     // 5 свободная память
+    COCWidgetSun,         // 6 восход / закат
+    COCWidgetMoon,        // 7 фаза луны
+    COCWidgetWorld,       // 8 мировое время
+    COCWidgetCountdown,   // 9 обратный отсчёт
+    COCWidgetYear,        // 10 прогресс года
 };
+
+// Фаза луны: возраст в сутках (0…29.53), освещённость 0…1, номер фазы 0…7
+static void COCMoon(NSDate *d, double *age, double *illum, int *phase) {
+    const double syn = 29.530588853;
+    double days = [d timeIntervalSince1970] / 86400.0 - 10957.2597;   // от новолуния 2000-01-06 18:14 UTC
+    double a = fmod(days, syn);
+    if (a < 0) a += syn;
+    *age = a;
+    *illum = (1 - cos(2 * M_PI * a / syn)) / 2;
+    *phase = (int)floor(a / syn * 8 + 0.5) % 8;
+}
+
+static NSString *COCMoonSymbol(int ph) {
+    static NSString *names[8] = { @"moonphase.new.moon", @"moonphase.waxing.crescent", @"moonphase.first.quarter",
+                                  @"moonphase.waxing.gibbous", @"moonphase.full.moon", @"moonphase.waning.gibbous",
+                                  @"moonphase.last.quarter", @"moonphase.waning.crescent" };
+    return names[ph & 7];
+}
+
+static NSString *COCMoonName(int ph) {
+    static NSString *names[8] = { @"Новолуние", @"Растущий серп", @"Первая четверть", @"Растущая луна",
+                                  @"Полнолуние", @"Убывающая луна", @"Последняя четверть", @"Убывающий серп" };
+    return names[ph & 7];
+}
 
 static UIColor *COCRGB(CGFloat r, CGFloat g, CGFloat b) {
     return [UIColor colorWithRed:r green:g blue:b alpha:1];
@@ -991,6 +1188,10 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip,
 - (void)editorRemoveCardAtIndex:(NSInteger)i;
 - (NSArray<NSNumber *> *)editorMissingTypes;
 - (void)editorAddType:(NSInteger)t;
+- (BOOL)editorHasRoom;
+- (BOOL)editorCanResize;
+- (BOOL)editorIsLongAtIndex:(NSInteger)i;
+- (BOOL)editorSetLong:(BOOL)lg atIndex:(NSInteger)i;
 @end
 
 static NSString *COCWidgetName(NSInteger t) {
@@ -1000,6 +1201,12 @@ static NSString *COCWidgetName(NSInteger t) {
         case 2: return @"Батарея";
         case 3: return @"Дата";
         case 4: return @"Заметка";
+        case 5: return @"Память";
+        case 6: return @"Восход/закат";
+        case 7: return @"Луна";
+        case 8: return @"Мировое время";
+        case 9: return @"Отсчёт";
+        case 10: return @"Год";
     }
     return @"Виджет";
 }
@@ -1020,8 +1227,11 @@ static NSString *COCWidgetName(NSInteger t) {
     CGFloat _panelH;
     NSMutableArray<UIView *> *_outlines;
     NSMutableArray<UIButton *> *_badges;
+    NSMutableArray<UIView *> *_grips;      // ручки размера на виджетах (малый ↔ длинный)
+    NSInteger _resizeIdx;
+    BOOL _resizeStartLong;
     UIPanGestureRecognizer *_pan;
-    int _mode;                  // 0 — нет, 1 — перенос часов, 2 — размер часов, 3 — перенос виджета
+    int _mode;                  // 0 — нет, 1 — перенос часов, 2 — размер часов, 3 — перенос виджетов, 4 — размер виджета
     CGPoint _startCorner;
     BOOL _keepRatio;
 }
@@ -1047,6 +1257,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         _keepRatio = YES;
         _outlines = [NSMutableArray array];
         _badges = [NSMutableArray array];
+        _grips = [NSMutableArray array];
         self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
         self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
@@ -1092,14 +1303,14 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         [self addSubview:_panel];
 
         _title = [[UILabel alloc] init];
-        _title.text = @"Экран блокировки · v0.10.1";
+        _title.text = @"Экран блокировки · v0.11";
         _title.textColor = [UIColor whiteColor];
         _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_title sizeToFit];
         [self addSubview:_title];
 
         _hint = [[UILabel alloc] init];
-        _hint.text = @"Тяни часы и блок виджетов, уголок — размер часов";
+        _hint.text = @"Тяни часы и блок виджетов · уголок часов — размер · значок ↔ на виджете — малый/длинный";
         _hint.textColor = [UIColor colorWithWhite:1 alpha:0.85];
         _hint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         _hint.textAlignment = NSTextAlignmentCenter;
@@ -1135,8 +1346,9 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 - (void)layoutPanelWidth:(CGFloat)w bottom:(CGFloat)bottom left:(CGFloat)left {
     for (UIView *v in [_panel.subviews copy]) [v removeFromSuperview];
     NSArray<NSNumber *> *missing = [_clock editorMissingTypes];
-    _add.alpha = missing.count ? 1 : 0.4;
-    if (!_panelOpen || missing.count == 0) { _panel.hidden = YES; return; }
+    BOOL room = [_clock editorHasRoom];
+    _add.alpha = (missing.count && room) ? 1 : 0.4;
+    if (!_panelOpen || missing.count == 0 || !room) { _panel.hidden = YES; return; }
     UIColor *light = [UIColor colorWithWhite:1 alpha:0.9];
     CGFloat x = 0, y = 0, rowH = 42;
     for (NSNumber *t in missing) {
@@ -1187,12 +1399,28 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         [b addTarget:self action:@selector(onBadge:) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:b];
         [_badges addObject:b];
+
+        // Ручка размера виджета: маленький кружок ↔ в правом нижнем углу
+        UIView *gr = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 26, 26)];
+        gr.userInteractionEnabled = NO;
+        gr.backgroundColor = [UIColor colorWithWhite:1 alpha:0.95];
+        gr.layer.cornerRadius = 13;
+        UILabel *ar = [[UILabel alloc] initWithFrame:gr.bounds];
+        ar.text = @"↔";
+        ar.textColor = [UIColor blackColor];
+        ar.textAlignment = NSTextAlignmentCenter;
+        ar.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+        [gr addSubview:ar];
+        [self addSubview:gr];
+        [_grips addObject:gr];
     }
     while ((NSInteger)_outlines.count > n) {
         [_outlines.lastObject removeFromSuperview];
         [_outlines removeLastObject];
         [_badges.lastObject removeFromSuperview];
         [_badges removeLastObject];
+        [_grips.lastObject removeFromSuperview];
+        [_grips removeLastObject];
     }
     for (NSInteger i = 0; i < n; i++) {
         CGRect cf = [c editorCardFrameAtIndex:i];
@@ -1203,7 +1431,15 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         b.tag = i;
         b.center = CGPointMake(cf.origin.x + 2, cf.origin.y + 2);
         [self bringSubviewToFront:b];
+        UIView *gv = _grips[i];
+        gv.hidden = ![c editorCanResize];
+        gv.center = [self widgetGripCenter:cf];
+        [self bringSubviewToFront:gv];
     }
+}
+
+- (CGPoint)widgetGripCenter:(CGRect)cf {
+    return CGPointMake(CGRectGetMaxX(cf) - 15, CGRectGetMaxY(cf) - 15);
 }
 
 - (CGPoint)gripCenter {
@@ -1214,7 +1450,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 - (void)onDone { [_clock endEditingSave:YES]; }
 - (void)onReset { [_clock editorReset]; _panelOpen = NO; [self setNeedsLayout]; }
 - (void)onAdd {
-    if (![_clock editorMissingTypes].count) return;
+    if (![_clock editorMissingTypes].count || ![_clock editorHasRoom]) return;
     _panelOpen = !_panelOpen;
     [self setNeedsLayout];
 }
@@ -1246,6 +1482,17 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGPoint s = CGPointMake(p.x - t.x, p.y - t.y);          // где палец лёг
     CGPoint gc = [self gripCenter];
     if (hypot(s.x - gc.x, s.y - gc.y) < 44) { _mode = 2; return YES; }
+    if ([c editorCanResize]) {
+        for (NSInteger i = [c editorCardCount] - 1; i >= 0; i--) {
+            CGPoint wg = [self widgetGripCenter:[c editorCardFrameAtIndex:i]];
+            if (hypot(s.x - wg.x, s.y - wg.y) < 26) {
+                _mode = 4;
+                _resizeIdx = i;
+                _resizeStartLong = [c editorIsLongAtIndex:i];
+                return YES;
+            }
+        }
+    }
     for (NSInteger i = [c editorCardCount] - 1; i >= 0; i--) {
         if (CGRectContainsPoint(CGRectInset([c editorCardFrameAtIndex:i], -6, -6), s)) {
             _mode = 3;
@@ -1268,7 +1515,9 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGPoint t = [g translationInView:self];
     switch (g.state) {
         case UIGestureRecognizerStateBegan:
-            if (_mode == 3) {
+            if (_mode == 4) {
+                // ничего не запоминаем: состояние берём из _resizeStartLong
+            } else if (_mode == 3) {
                 [c editorSnapshotWidgets];
             } else {
                 [c editorSnapshot];
@@ -1280,6 +1529,12 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
             else if (_mode == 2) [c editorResizeCorner:CGPointMake(_startCorner.x + t.x, _startCorner.y + t.y)
                                             lockRatio:_keepRatio];
             else if (_mode == 3) [c editorMoveWidgetsBy:t];
+            else if (_mode == 4) {
+                // Два положения: вправо — длинный, влево — малый (с небольшим запасом против дрожания)
+                CGFloat thr = 36;
+                BOOL wantLong = _resizeStartLong ? (t.x > -thr) : (t.x > thr);
+                [c editorSetLong:wantLong atIndex:_resizeIdx];
+            }
             [self refresh];
             break;
         default:
@@ -1318,7 +1573,11 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGFloat _pT, _pL, _pB, _pR;
     CGFloat _size, _w, _h, _op, _ox, _oy;
     CGFloat _wOp, _wRad, _wScale;
-    NSString *_txt, *_city;
+    NSString *_txt, *_city, *_worldZone, *_cdTitle, *_cdDate;
+    NSMutableSet<NSNumber *> *_wLong;        // типы виджетов в длинном виде
+    NSSet<NSNumber *> *_sessLong;
+    BOOL _animLayout;
+    NSInteger _wShown;                       // сколько виджетов из списка помещается в текущем варианте
     BOOL _cEnabled, _cForce, _debug;
     CGFloat _cSpeed, _cDist;
 
@@ -1344,6 +1603,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGRect _snapFrame;
     NSArray<NSNumber *> *_sessList;
     CGPoint _sessOff;
+    BOOL _sizeSnapLong;
     CGPoint _cardSnap;
     NSTimer *_keepTimer;
     CFTimeInterval _editStart;
@@ -1475,6 +1735,9 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     _wEnPref  = COCB(@"widgetsEnabled", YES);
     if (!_editing) [self loadWidgetList];
     _txt      = COCS(@"widgetTextValue", @"ColorOS");
+    _worldZone = COCS(@"worldZone", @"Asia/Tokyo");
+    _cdTitle   = COCS(@"countdownTitle", @"Новый год");
+    _cdDate    = COCS(@"countdownDate", @"2027-01-01");
     _wOp      = COCF(@"widgetOpacity", 20);
     _wRad     = COCF(@"widgetRadius", 18);
     _wScale   = COCF(@"widgetScale", 100);
@@ -1515,7 +1778,7 @@ static id COCCopyPref(NSString *key) {
         for (id o in list) {
             if (![o isKindOfClass:[NSNumber class]]) continue;
             NSInteger t = [o integerValue];
-            if (t < 0 || t > 4) continue;
+            if (t < 0 || t >= COC_TYPES) continue;
             if (![out containsObject:@(t)]) [out addObject:@(t)];
         }
     } else {
@@ -1525,6 +1788,12 @@ static id COCCopyPref(NSString *key) {
         for (NSInteger i = 0; i < 5; i++) if (on[i]) [out addObject:@(i)];
     }
     _wList = out;
+
+    NSArray *lg = COCCopyPref(@"widgetLong");
+    _wLong = [NSMutableSet set];
+    if ([lg isKindOfClass:[NSArray class]]) {
+        for (id o in lg) if ([o isKindOfClass:[NSNumber class]]) [_wLong addObject:@([o integerValue])];
+    }
 
     NSArray *pos = COCCopyPref(@"widgetPos");
     _wOff = CGPointZero;
@@ -1536,8 +1805,20 @@ static id COCCopyPref(NSString *key) {
 - (void)rebuildCards {
     for (COCWidgetCard *c in _cards) [c removeFromSuperview];
     [_cards removeAllObjects];
+    _wShown = 0;
     if (_wEnPref || _editing) {
+        // Берём из списка столько виджетов, сколько помещается в выбранном варианте
+        int lng[COC_MAXW];
+        NSInteger cnt = 0;
         for (NSNumber *t in _wList) {
+            if (cnt >= COC_MAXW) break;
+            lng[cnt] = [_wLong containsObject:t] ? 1 : 0;
+            if (!COCFitsN((int)_style, lng, (int)cnt + 1)) break;
+            cnt++;
+        }
+        _wShown = cnt;
+        for (NSInteger ci = 0; ci < cnt; ci++) {
+            NSNumber *t = _wList[ci];
             COCWidgetCard *card = [[COCWidgetCard alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
             card.tag = t.integerValue;
             card.fillAlpha = _wOp / 100.0 * 0.5;
@@ -1582,7 +1863,8 @@ static id COCCopyPref(NSString *key) {
     _minsV.text = m;
 
     // Погода
-    if (_showWeather || [_wList containsObject:@(COCWidgetWeather)]) COCWeatherRefresh(_city);
+    if (_showWeather || [_wList containsObject:@(COCWidgetWeather)] || [_wList containsObject:@(COCWidgetSun)])
+        COCWeatherRefresh(_city);
     BOOL showW = _showWeather && COCWValid;
 
     // Дата / погода рядом с часами
@@ -1638,40 +1920,157 @@ static id COCCopyPref(NSString *key) {
         _dateS.attributedText = ms;
     }
 
-    // Содержимое виджетов
+    // Содержимое виджетов: значение (малый вид) + заголовок и подпись (длинный вид)
     for (COCWidgetCard *card in _cards) {
+        NSString *sym = @"star.fill", *val = @"—", *ttl = @"", *sub = @"";
         switch (card.tag) {
             case COCWidgetAlarm: {
                 NSDate *ad = COCNextAlarmDate();
-                NSString *v = @"—";
+                sym = @"alarm.fill";
+                ttl = @"Будильник";
                 if (ad) {
                     _fmt.dateFormat = _use24 ? @"HH:mm" : @"h:mm";
-                    v = [_fmt stringFromDate:ad];
+                    val = [_fmt stringFromDate:ad];
+                    NSInteger mins = (NSInteger)ceil([ad timeIntervalSinceNow] / 60.0);
+                    if (mins < 1) mins = 1;
+                    sub = mins >= 60 ? [NSString stringWithFormat:@"через %ld ч %ld мин", (long)(mins / 60), (long)(mins % 60)]
+                                     : [NSString stringWithFormat:@"через %ld мин", (long)mins];
+                } else {
+                    sub = @"не заведён";
                 }
-                [card setSymbol:@"alarm.fill" value:v];
                 break;
             }
             case COCWidgetWeather: {
-                NSString *v = COCWValid ? [NSString stringWithFormat:@"%d°", (int)lround(COCWTemp)] : @"—";
-                [card setSymbol:(COCWValid ? COCWeatherSymbol(COCWCode) : @"cloud.fill") value:v];
+                sym = COCWValid ? COCWeatherSymbol(COCWCode) : @"cloud.fill";
+                ttl = _city.length ? _city : @"Погода";
+                if (COCWValid) {
+                    val = [NSString stringWithFormat:@"%d°", (int)lround(COCWTemp)];
+                    NSString *rng = COCWDaily ? [NSString stringWithFormat:@"\n%d° / %d°", (int)lround(COCWMin), (int)lround(COCWMax)] : @"";
+                    sub = [COCWeatherText(COCWCode) stringByAppendingString:rng];
+                }
                 break;
             }
             case COCWidgetBattery: {
                 UIDevice *dev = UIDevice.currentDevice;
                 float lvl = dev.batteryLevel;
-                NSString *v = lvl < 0 ? @"—" : [NSString stringWithFormat:@"%d%%", (int)roundf(lvl * 100)];
+                val = lvl < 0 ? @"—" : [NSString stringWithFormat:@"%d%%", (int)roundf(lvl * 100)];
                 BOOL chg = dev.batteryState == UIDeviceBatteryStateCharging ||
                            dev.batteryState == UIDeviceBatteryStateFull;
-                [card setSymbol:(chg ? @"battery.100.bolt" : @"battery.100") value:v];
+                sym = chg ? @"battery.100.bolt" : @"battery.100";
+                ttl = @"Батарея";
+                sub = chg ? @"заряжается" : ([NSProcessInfo processInfo].lowPowerModeEnabled ? @"эконом. режим" : @"от батареи");
                 break;
             }
-            case COCWidgetDate:
-                [card setSymbol:@"calendar" value:dm];
+            case COCWidgetDate: {
+                sym = @"calendar";
+                val = dm;
+                _fmt.dateFormat = @"EEEE";
+                ttl = [_fmt stringFromDate:now];
+                NSInteger wk = [[NSCalendar currentCalendar] component:NSCalendarUnitWeekOfYear fromDate:now];
+                sub = [NSString stringWithFormat:@"%ld-я неделя", (long)wk];
                 break;
+            }
             case COCWidgetText:
-                [card setSymbol:@"star.fill" value:_txt];
+                sym = @"star.fill";
+                val = _txt;
+                ttl = @"Заметка";
                 break;
+            case COCWidgetStorage: {
+                sym = @"internaldrive.fill";
+                ttl = @"Память";
+                NSDictionary *fs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
+                double free = [fs[NSFileSystemFreeSize] doubleValue], total = [fs[NSFileSystemSize] doubleValue];
+                if (total > 0) {
+                    val = [NSString stringWithFormat:@"%d ГБ", (int)lround(free / 1e9)];
+                    sub = [NSString stringWithFormat:@"свободно\nиз %d ГБ", (int)lround(total / 1e9)];
+                }
+                break;
+            }
+            case COCWidgetSun: {
+                ttl = @"Солнце";
+                NSDate *sr = COCWSunrise, *ss = COCWSunset;
+                NSTimeZone *tz = [NSTimeZone timeZoneForSecondsFromGMT:COCWOffset];
+                _fmt.dateFormat = @"HH:mm";
+                NSTimeZone *oldTZ = _fmt.timeZone;
+                _fmt.timeZone = tz;
+                if (sr && ss) {
+                    BOOL beforeRise = [now compare:sr] == NSOrderedAscending;
+                    BOOL beforeSet = [now compare:ss] == NSOrderedAscending;
+                    sym = (!beforeRise && beforeSet) ? @"sunset.fill" : @"sunrise.fill";
+                    if (beforeRise) val = [_fmt stringFromDate:sr];
+                    else if (beforeSet) val = [_fmt stringFromDate:ss];
+                    else val = COCWSunriseNext ? [_fmt stringFromDate:COCWSunriseNext] : [_fmt stringFromDate:sr];
+                    sub = [NSString stringWithFormat:@"Восход %@\nЗакат %@", [_fmt stringFromDate:sr], [_fmt stringFromDate:ss]];
+                } else {
+                    sym = @"sunrise.fill";
+                }
+                _fmt.timeZone = oldTZ;
+                break;
+            }
+            case COCWidgetMoon: {
+                double age, ill; int ph;
+                COCMoon(now, &age, &ill, &ph);
+                sym = COCMoonSymbol(ph);
+                val = [NSString stringWithFormat:@"%d%%", (int)lround(ill * 100)];
+                ttl = @"Луна";
+                sub = COCMoonName(ph);
+                break;
+            }
+            case COCWidgetWorld: {
+                NSTimeZone *tz = _worldZone.length ? [NSTimeZone timeZoneWithName:_worldZone] : nil;
+                sym = @"globe";
+                ttl = @"Мировое время";
+                if (tz) {
+                    NSString *city = [[_worldZone componentsSeparatedByString:@"/"].lastObject
+                                         stringByReplacingOccurrencesOfString:@"_" withString:@" "];
+                    NSTimeZone *oldTZ = _fmt.timeZone;
+                    _fmt.timeZone = tz;
+                    _fmt.dateFormat = _use24 ? @"HH:mm" : @"h:mm";
+                    val = [_fmt stringFromDate:now];
+                    _fmt.timeZone = oldTZ;
+                    NSInteger dh = ([tz secondsFromGMTForDate:now] - [[NSTimeZone localTimeZone] secondsFromGMTForDate:now]) / 60;
+                    NSString *diff = dh == 0 ? @"то же время"
+                                   : [NSString stringWithFormat:@"%+ld ч%@", (long)(dh / 60), (dh % 60) ? [NSString stringWithFormat:@" %ld мин", (long)labs(dh % 60)] : @""];
+                    ttl = city;
+                    sub = diff;
+                } else {
+                    sub = @"укажи пояс\nв настройках";
+                }
+                break;
+            }
+            case COCWidgetCountdown: {
+                sym = @"hourglass";
+                ttl = _cdTitle.length ? _cdTitle : @"Отсчёт";
+                NSDateFormatter *df = [[NSDateFormatter alloc] init];
+                df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+                df.dateFormat = @"yyyy-MM-dd";
+                NSDate *target = [df dateFromString:[_cdDate stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
+                if (target) {
+                    NSCalendar *cal = [NSCalendar currentCalendar];
+                    NSInteger days = [cal components:NSCalendarUnitDay
+                                            fromDate:[cal startOfDayForDate:now]
+                                              toDate:[cal startOfDayForDate:target] options:0].day;
+                    if (days > 0) { val = [NSString stringWithFormat:@"%ld д", (long)days]; sub = @"осталось"; }
+                    else if (days == 0) { val = @"Сегодня"; sub = @"наступило"; }
+                    else { val = [NSString stringWithFormat:@"%ld д", (long)-days]; sub = @"прошло"; }
+                } else {
+                    sub = @"дата ГГГГ-ММ-ДД";
+                }
+                break;
+            }
+            case COCWidgetYear: {
+                sym = @"calendar.badge.clock";
+                NSCalendar *cal = [NSCalendar currentCalendar];
+                NSInteger doy = [cal ordinalityOfUnit:NSCalendarUnitDay inUnit:NSCalendarUnitYear forDate:now];
+                NSInteger total = [cal rangeOfUnit:NSCalendarUnitDay inUnit:NSCalendarUnitYear forDate:now].length;
+                if (total < 1) total = 365;
+                val = [NSString stringWithFormat:@"%d%%", (int)lround(100.0 * doy / total)];
+                ttl = [NSString stringWithFormat:@"%ld год", (long)[cal component:NSCalendarUnitYear fromDate:now]];
+                sub = [NSString stringWithFormat:@"день %ld\nиз %ld", (long)doy, (long)total];
+                break;
+            }
         }
+        [card setSymbol:sym value:val title:ttl sub:sub];
     }
 
     [self setNeedsLayout];
@@ -1697,6 +2096,7 @@ static id COCCopyPref(NSString *key) {
     in.smallK = 1.0;   // малые часы масштабируются вместе с размером, который задан в редакторе
     in.style = (int)_style;
     in.n = (int)MIN(_cards.count, (NSUInteger)COC_MAXW);
+    for (int i = 0; i < in.n; i++) in.lng[i] = [_wLong containsObject:@(_cards[i].tag)] ? 1 : 0;
 
     if (_style == 3) {
         in.date = [_dateL sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)];
@@ -1718,7 +2118,7 @@ static id COCCopyPref(NSString *key) {
 
     CGFloat op = _op / 100.0;
     [CATransaction begin];
-    [CATransaction setDisableActions:YES];
+    if (!_animLayout) [CATransaction setDisableActions:YES];   // _animLayout: рамки меняются внутри UIView-анимации
 
     _hoursV.frame = f.hours;
     _minsV.frame = f.mins;
@@ -1744,7 +2144,7 @@ static id COCCopyPref(NSString *key) {
         r.origin.x += _wOff.x * (1 - p);
         r.origin.y += _wOff.y * (1 - p);
         c.frame = r;
-        CGFloat sc = _E.sq > 0 ? r.size.width / _E.sq : 1;
+        CGFloat sc = _E.sq > 0 ? r.size.height / _E.sq : 1;
         c.layer.cornerRadius = MIN(_wRad * ws * sc, r.size.width / 2.0);
     }
     [CATransaction commit];
@@ -1834,6 +2234,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     _editStart = CACurrentMediaTime();
     _sess[0] = _size; _sess[1] = _w; _sess[2] = _h; _sess[3] = _ox; _sess[4] = _oy;
     _sessList = [_wList copy];
+    _sessLong = [_wLong copy];
     _sessOff = _wOff;
     [self rebuildCards];            // в редакторе виджеты видны, даже если выключены в настройках
     [self setKeepAwake:YES];
@@ -1859,6 +2260,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         COCSetPref(@"offsetX", _ox);
         COCSetPref(@"offsetY", _oy);
         COCSetPrefObj(@"widgetList", [_wList copy]);
+        COCSetPrefObj(@"widgetLong", [_wLong allObjects] ?: @[]);
         COCSetPrefObj(@"widgetPos", @[ @(_wOff.x), @(_wOff.y) ]);
         if (!_wEnPref && _wList.count > 0) {
             _wEnPref = YES;
@@ -1868,6 +2270,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     } else {
         _size = _sess[0]; _w = _sess[1]; _h = _sess[2]; _ox = _sess[3]; _oy = _sess[4];
         _wList = [_sessList mutableCopy] ?: [NSMutableArray array];
+        _wLong = [_sessLong mutableCopy] ?: [NSMutableSet set];
         _wOff = _sessOff;
     }
     _editing = NO;
@@ -1927,6 +2330,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
 - (void)editorReset {
     _size = 100; _w = 100; _h = 100; _ox = 0; _oy = 0;
     _wList = [@[ @0, @1 ] mutableCopy];
+    [_wLong removeAllObjects];
     _wOff = CGPointZero;
     [self rebuildCards];
     [self setNeedsLayout];
@@ -1964,19 +2368,66 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     if (i < 0 || i >= (NSInteger)_cards.count) return;
     NSNumber *t = @(_cards[i].tag);
     [_wList removeObject:t];
+    [_wLong removeObject:t];
     [self rebuildCards];
 }
 
 - (NSArray<NSNumber *> *)editorMissingTypes {
     NSMutableArray<NSNumber *> *m = [NSMutableArray array];
-    for (NSInteger t = 0; t < 5; t++) if (![_wList containsObject:@(t)]) [m addObject:@(t)];
+    for (NSInteger t = 0; t < COC_TYPES; t++) if (![_wList containsObject:@(t)]) [m addObject:@(t)];
     return m;
 }
 
+// Есть ли место ещё для одного малого виджета в выбранном варианте
+- (BOOL)editorHasRoom {
+    int lng[COC_MAXW];
+    NSInteger n = MIN((NSInteger)_wList.count, (NSInteger)COC_MAXW - 1);
+    if ((NSInteger)_wList.count >= COC_MAXW) return NO;
+    for (NSInteger i = 0; i < n; i++) lng[i] = [_wLong containsObject:_wList[i]] ? 1 : 0;
+    lng[n] = 0;
+    return COCFitsN((int)_style, lng, (int)n + 1) && _wShown == (NSInteger)_wList.count;
+}
+
 - (void)editorAddType:(NSInteger)t {
-    if (t < 0 || t > 4 || [_wList containsObject:@(t)]) return;
+    if (t < 0 || t >= COC_TYPES || [_wList containsObject:@(t)] || ![self editorHasRoom]) return;
     [_wList addObject:@(t)];
     [self rebuildCards];
+}
+
+#pragma mark Редактор: размер виджета (2 положения)
+
+// В варианте 2 виджеты всегда квадраты — ручки размера там нет
+- (BOOL)editorCanResize { return _style != 2; }
+
+- (BOOL)editorIsLongAtIndex:(NSInteger)i {
+    return (i >= 0 && i < (NSInteger)_cards.count) && [_wLong containsObject:@(_cards[i].tag)];
+}
+
+// Меняет положение виджета (малый/длинный), если всё остальное по-прежнему помещается.
+// Возвращает YES, если состояние изменилось. Перестройка — с анимацией.
+- (BOOL)editorSetLong:(BOOL)lg atIndex:(NSInteger)i {
+    if (![self editorCanResize] || i < 0 || i >= (NSInteger)_cards.count) return NO;
+    NSNumber *t = @(_cards[i].tag);
+    if ([_wLong containsObject:t] == lg) return NO;
+    if (lg) [_wLong addObject:t]; else [_wLong removeObject:t];
+    int lng[COC_MAXW];
+    NSInteger n = MIN((NSInteger)_wList.count, (NSInteger)COC_MAXW);
+    for (NSInteger k = 0; k < n; k++) lng[k] = [_wLong containsObject:_wList[k]] ? 1 : 0;
+    if (!COCFitsN((int)_style, lng, (int)_wShown)) {       // не помещается — возвращаем как было
+        if (lg) [_wLong removeObject:t]; else [_wLong addObject:t];
+        return NO;
+    }
+    [UIView animateWithDuration:0.24 delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                     animations:^{
+        self->_animLayout = YES;
+        [self setNeedsLayout];
+        [self layoutIfNeeded];
+        [self->_editor refresh];
+        self->_animLayout = NO;
+    } completion:nil];
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    return YES;
 }
 
 #pragma mark Редактор: экран не должен гаснуть

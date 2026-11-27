@@ -10,7 +10,7 @@
 			<key>footerText</key>
 			<string>Часы и виджеты: долгое нажатие на самих часах на экране блокировки → тяни часы и виджеты, уголок — размер часов.</string>
 			<key>label</key>
-			<string>Основное · v0.10.1</string>
+			<string>Основное · v0.11</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -474,7 +474,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Какие виджеты показывать, где они стоят и сколько их — меняется на экране блокировки: долгое нажатие на часах → «+ Виджет», красный «−» на виджете, перетаскивание.</string>
+			<string>Какие виджеты показывать, где они стоят и сколько их — меняется на экране блокировки: долгое нажатие на часах → «+ Виджет», красный «−» на виджете, перетаскивание; значок ↔ в углу виджета переключает «малый / длинный» (в варианте 2 виджеты всегда квадратные).</string>
 			<key>label</key>
 			<string>Виджеты</string>
 		</dict>
@@ -511,6 +511,70 @@
 			<string>widgetTextValue</string>
 			<key>placeholder</key>
 			<string>Текст</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Часовой пояс в формате IANA, например Asia/Tokyo, Europe/London, America/New_York.</string>
+			<key>label</key>
+			<string>Мировое время</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>Asia/Tokyo</string>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>worldZone</string>
+			<key>placeholder</key>
+			<string>Asia/Tokyo</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Обратный отсчёт: название</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>Новый год</string>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>countdownTitle</string>
+			<key>placeholder</key>
+			<string>Название</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Формат ГГГГ-ММ-ДД, например 2027-01-01.</string>
+			<key>label</key>
+			<string>Обратный отсчёт: дата</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.coloros.clocktweak/prefsChanged</string>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>default</key>
+			<string>2027-01-01</string>
+			<key>defaults</key>
+			<string>com.coloros.clocktweak</string>
+			<key>key</key>
+			<string>countdownDate</string>
+			<key>placeholder</key>
+			<string>2027-01-01</string>
 		</dict>
 		<dict>
 			<key>cell</key>
