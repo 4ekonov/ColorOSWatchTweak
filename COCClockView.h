@@ -11,4 +11,6 @@
 - (void)installLongPressOn:(UIView *)host;
 /// Передаёт часам контроллер экрана блокировки (чтобы редактор мог отключать автоблокировку).
 + (void)registerCoverSheet:(id)vc;
+/// Передаёт часам контроллер списка уведомлений (для слежения за вытягиванием истории).
++ (void)registerListController:(id)vc;
 @end

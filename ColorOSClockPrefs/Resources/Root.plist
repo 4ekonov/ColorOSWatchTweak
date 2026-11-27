@@ -10,7 +10,7 @@
 			<key>footerText</key>
 			<string>Часы и виджеты: долгое нажатие на самих часах на экране блокировки → тяни часы и виджеты, уголок — размер часов.</string>
 			<key>label</key>
-			<string>Основное · v0.10.0</string>
+			<string>Основное · v0.10.1</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>

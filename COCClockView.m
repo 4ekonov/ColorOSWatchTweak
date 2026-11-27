@@ -864,7 +864,14 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 #pragma mark - Слежение за уведомлениями (геометрия ячеек на экране)
 
 static __weak UIView *COCListHint;   // вид списка уведомлений (подсказка из Tweak.xm)
+static __weak id COCListVC;           // CSCombinedListViewController
 static __weak id COCCoverSheetVC;    // CSCoverSheetViewController (нужен, чтобы не гасить экран в редакторе)
+
+// Безопасное чтение приватных свойств через KVC
+static id COCKV(id obj, NSString *key) {
+    if (!obj) return nil;
+    @try { return [obj valueForKey:key]; } @catch (NSException *e) { return nil; }
+}
 
 static BOOL COCIsNotifCell(UIView *v) {
     static Class cellCls;
@@ -928,7 +935,8 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip,
             }
             if ([s isKindOfClass:[UIControl class]]) continue;     // кнопки («Очистить») не считаем
             const char *n = object_getClassName(s);
-            if (n && (strstr(n, "NoOlder") || strstr(n, "EmptyView") || strstr(n, "EmptyState"))) {
+            if (n && (strstr(n, "NoOlder") || strstr(n, "Empty") || strstr(n, "RevealHint") ||
+                      strstr(n, "LegibilityLabel") || strstr(n, "HistoryHint"))) {
                 [labels addObject:s];
                 continue;
             }
@@ -978,8 +986,8 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip,
 // Виджеты
 - (NSInteger)editorCardCount;
 - (CGRect)editorCardFrameAtIndex:(NSInteger)i;
-- (void)editorSnapshotCardAtIndex:(NSInteger)i;
-- (void)editorMoveCardAtIndex:(NSInteger)i by:(CGPoint)d;
+- (void)editorSnapshotWidgets;
+- (void)editorMoveWidgetsBy:(CGPoint)d;
 - (void)editorRemoveCardAtIndex:(NSInteger)i;
 - (NSArray<NSNumber *> *)editorMissingTypes;
 - (void)editorAddType:(NSInteger)t;
@@ -1014,7 +1022,6 @@ static NSString *COCWidgetName(NSInteger t) {
     NSMutableArray<UIButton *> *_badges;
     UIPanGestureRecognizer *_pan;
     int _mode;                  // 0 — нет, 1 — перенос часов, 2 — размер часов, 3 — перенос виджета
-    NSInteger _cardIdx;
     CGPoint _startCorner;
     BOOL _keepRatio;
 }
@@ -1085,14 +1092,14 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         [self addSubview:_panel];
 
         _title = [[UILabel alloc] init];
-        _title.text = @"Экран блокировки · v0.10";
+        _title.text = @"Экран блокировки · v0.10.1";
         _title.textColor = [UIColor whiteColor];
         _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_title sizeToFit];
         [self addSubview:_title];
 
         _hint = [[UILabel alloc] init];
-        _hint.text = @"Тяни часы и виджеты, уголок — размер часов";
+        _hint.text = @"Тяни часы и блок виджетов, уголок — размер часов";
         _hint.textColor = [UIColor colorWithWhite:1 alpha:0.85];
         _hint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         _hint.textAlignment = NSTextAlignmentCenter;
@@ -1241,7 +1248,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     if (hypot(s.x - gc.x, s.y - gc.y) < 44) { _mode = 2; return YES; }
     for (NSInteger i = [c editorCardCount] - 1; i >= 0; i--) {
         if (CGRectContainsPoint(CGRectInset([c editorCardFrameAtIndex:i], -6, -6), s)) {
-            _mode = 3; _cardIdx = i;
+            _mode = 3;
             return YES;
         }
     }
@@ -1262,7 +1269,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     switch (g.state) {
         case UIGestureRecognizerStateBegan:
             if (_mode == 3) {
-                [c editorSnapshotCardAtIndex:_cardIdx];
+                [c editorSnapshotWidgets];
             } else {
                 [c editorSnapshot];
                 _startCorner = CGPointMake(CGRectGetMaxX([c editorFrame]), CGRectGetMaxY([c editorFrame]));
@@ -1272,7 +1279,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
             if (_mode == 1) [c editorMoveBy:t];
             else if (_mode == 2) [c editorResizeCorner:CGPointMake(_startCorner.x + t.x, _startCorner.y + t.y)
                                             lockRatio:_keepRatio];
-            else if (_mode == 3) [c editorMoveCardAtIndex:_cardIdx by:t];
+            else if (_mode == 3) [c editorMoveWidgetsBy:t];
             [self refresh];
             break;
         default:
@@ -1298,7 +1305,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     UILabel *_dbg;          // отладочная строка
     NSMutableArray<COCWidgetCard *> *_cards;
     NSMutableArray<NSNumber *> *_wList;                     // типы виджетов по порядку
-    NSMutableDictionary<NSNumber *, NSValue *> *_wPos;      // тип -> сдвиг (CGPoint) от места по умолчанию
+    CGPoint _wOff;                                          // общий сдвиг всех виджетов от места по умолчанию
     NSTimer *_timer;
     NSDateFormatter *_fmt;
     UIColor *_tint;
@@ -1336,11 +1343,14 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGFloat _snap[5];        // то же перед текущим жестом
     CGRect _snapFrame;
     NSArray<NSNumber *> *_sessList;
-    NSDictionary<NSNumber *, NSValue *> *_sessPos;
+    CGPoint _sessOff;
     CGPoint _cardSnap;
     NSTimer *_keepTimer;
     CFTimeInterval _editStart;
     NSInteger _labelCount;
+    CGFloat _scrollBase, _scrollD;
+    BOOL _scrollHaveBase, _histFlag;
+    NSString *_lblNames;
 }
 
 + (void)registerListView:(UIView *)view {
@@ -1516,16 +1526,11 @@ static id COCCopyPref(NSString *key) {
     }
     _wList = out;
 
-    NSDictionary *pos = COCCopyPref(@"widgetPos");
-    NSMutableDictionary<NSNumber *, NSValue *> *pm = [NSMutableDictionary dictionary];
-    if ([pos isKindOfClass:[NSDictionary class]]) {
-        for (id k in pos) {
-            NSArray *a = pos[k];
-            if (![a isKindOfClass:[NSArray class]] || a.count != 2) continue;
-            pm[@([k integerValue])] = [NSValue valueWithCGPoint:CGPointMake([a[0] doubleValue], [a[1] doubleValue])];
-        }
+    NSArray *pos = COCCopyPref(@"widgetPos");
+    _wOff = CGPointZero;
+    if ([pos isKindOfClass:[NSArray class]] && pos.count == 2) {
+        _wOff = CGPointMake([pos[0] doubleValue], [pos[1] doubleValue]);
     }
-    _wPos = pm;
 }
 
 - (void)rebuildCards {
@@ -1735,12 +1740,9 @@ static id COCCopyPref(NSString *key) {
     for (NSInteger i = 0; i < n; i++) {
         COCWidgetCard *c = _cards[i];
         CGRect r = f.card[i];
-        NSValue *ov = _wPos[@(c.tag)];
-        if (ov) {                                   // свой сдвиг виджета; в малых часах возвращаются на место
-            CGPoint o = ov.CGPointValue;
-            r.origin.x += o.x * (1 - p);
-            r.origin.y += o.y * (1 - p);
-        }
+        // Общий сдвиг блока виджетов; в малых часах виджеты возвращаются на стандартное место
+        r.origin.x += _wOff.x * (1 - p);
+        r.origin.y += _wOff.y * (1 - p);
         c.frame = r;
         CGFloat sc = _E.sq > 0 ? r.size.width / _E.sq : 1;
         c.layer.cornerRadius = MIN(_wRad * ws * sc, r.size.width / 2.0);
@@ -1832,7 +1834,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     _editStart = CACurrentMediaTime();
     _sess[0] = _size; _sess[1] = _w; _sess[2] = _h; _sess[3] = _ox; _sess[4] = _oy;
     _sessList = [_wList copy];
-    _sessPos = [_wPos copy];
+    _sessOff = _wOff;
     [self rebuildCards];            // в редакторе виджеты видны, даже если выключены в настройках
     [self setKeepAwake:YES];
 
@@ -1857,12 +1859,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         COCSetPref(@"offsetX", _ox);
         COCSetPref(@"offsetY", _oy);
         COCSetPrefObj(@"widgetList", [_wList copy]);
-        NSMutableDictionary *pd = [NSMutableDictionary dictionary];
-        for (NSNumber *k in _wPos) {
-            CGPoint pt = _wPos[k].CGPointValue;
-            pd[k.stringValue] = @[ @(pt.x), @(pt.y) ];
-        }
-        COCSetPrefObj(@"widgetPos", pd);
+        COCSetPrefObj(@"widgetPos", @[ @(_wOff.x), @(_wOff.y) ]);
         if (!_wEnPref && _wList.count > 0) {
             _wEnPref = YES;
             COCSetPrefObj(@"widgetsEnabled", @YES);
@@ -1871,7 +1868,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     } else {
         _size = _sess[0]; _w = _sess[1]; _h = _sess[2]; _ox = _sess[3]; _oy = _sess[4];
         _wList = [_sessList mutableCopy] ?: [NSMutableArray array];
-        _wPos = [_sessPos mutableCopy] ?: [NSMutableDictionary dictionary];
+        _wOff = _sessOff;
     }
     _editing = NO;
     [self setKeepAwake:NO];
@@ -1930,7 +1927,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
 - (void)editorReset {
     _size = 100; _w = 100; _h = 100; _ox = 0; _oy = 0;
     _wList = [@[ @0, @1 ] mutableCopy];
-    _wPos = [NSMutableDictionary dictionary];
+    _wOff = CGPointZero;
     [self rebuildCards];
     [self setNeedsLayout];
     [self layoutIfNeeded];
@@ -1945,20 +1942,21 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     return (i >= 0 && i < (NSInteger)_cards.count) ? _cards[i].frame : CGRectZero;
 }
 
-- (void)editorSnapshotCardAtIndex:(NSInteger)i {
-    if (i < 0 || i >= (NSInteger)_cards.count) return;
-    NSValue *v = _wPos[@(_cards[i].tag)];
-    _cardSnap = v ? v.CGPointValue : CGPointZero;
+- (void)editorSnapshotWidgets {
+    _cardSnap = _wOff;
 }
 
-- (void)editorMoveCardAtIndex:(NSInteger)i by:(CGPoint)d {
-    if (i < 0 || i >= (NSInteger)_cards.count || i >= COC_MAXW) return;
-    CGRect b = _E.card[i];                                  // место по умолчанию (развёрнутый вид)
+// Все виджеты двигаются вместе; блок не должен выйти за экран
+- (void)editorMoveWidgetsBy:(CGPoint)d {
+    NSInteger n = MIN((NSInteger)_cards.count, (NSInteger)COC_MAXW);
+    if (n == 0) return;
+    CGRect u = _E.card[0];
+    for (NSInteger i = 1; i < n; i++) u = CGRectUnion(u, _E.card[i]);
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
     CGFloat ox = _cardSnap.x + d.x, oy = _cardSnap.y + d.y;
-    ox = MAX(-b.origin.x, MIN(W - b.size.width - b.origin.x, ox));
-    oy = MAX(-b.origin.y, MIN(H - b.size.height - b.origin.y, oy));
-    _wPos[@(_cards[i].tag)] = [NSValue valueWithCGPoint:CGPointMake(ox, oy)];
+    ox = MAX(-CGRectGetMinX(u), MIN(W - CGRectGetMaxX(u), ox));
+    oy = MAX(-CGRectGetMinY(u), MIN(H - CGRectGetMaxY(u), oy));
+    _wOff = CGPointMake(ox, oy);
     [self applyProgress:_prog];
 }
 
@@ -1966,7 +1964,6 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     if (i < 0 || i >= (NSInteger)_cards.count) return;
     NSNumber *t = @(_cards[i].tag);
     [_wList removeObject:t];
-    [_wPos removeObjectForKey:t];
     [self rebuildCards];
 }
 
@@ -1986,6 +1983,10 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
 
 + (void)registerCoverSheet:(id)vc {
     COCCoverSheetVC = vc;
+}
+
++ (void)registerListController:(id)vc {
+    COCListVC = vc;
 }
 
 - (id)idleController {
@@ -2109,6 +2110,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     }
     // Нет ячеек, но на экране есть надпись списка («Нет прошлых уведомлений») — тоже считаем «уведомлениями»
     NSInteger lcount = 0;
+    NSString *names = nil;
     if (count == 0) {
         for (UIView *l in labs) {
             if (!l.window) continue;
@@ -2117,6 +2119,10 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
             if (a < 0.05 || r.size.height < 8 || r.size.width < 8) continue;
             if (r.origin.y >= H - 1 || CGRectGetMaxY(r) <= 0) continue;
             lcount++;
+            if (lcount <= 2) {
+                NSString *nm = NSStringFromClass([l class]);
+                names = names ? [names stringByAppendingFormat:@",%@", nm] : nm;
+            }
             if (r.origin.y < top) top = r.origin.y;
             UIView *p = l.superview;
             while (p && ![p isKindOfClass:[UIScrollView class]]) p = p.superview;
@@ -2126,9 +2132,32 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         count = lcount;
     }
     _labelCount = lcount;
+    _lblNames = names;
     _cellCount = count;
     _topSeen = (count > 0) ? top : -1;
     if (count > 0) *target = COCCollapseTarget(top, H, _cDist);
+
+    // Список истории вытягивается скроллом: следим за смещением его scroll view и за флагом «история раскрыта»
+    id lvc = COCListVC;
+    UIScrollView *sv = COCKV(lvc, @"notificationListScrollView");
+    if (![sv isKindOfClass:[UIScrollView class]]) sv = nil;
+    id hv = COCKV(lvc, @"historyWasRevealed");
+    BOOL hist = [hv respondsToSelector:@selector(boolValue)] ? [hv boolValue] : NO;
+    _histFlag = hist;
+    _scrollD = 0;
+    if (sv) {
+        CGFloat off = sv.contentOffset.y + sv.adjustedContentInset.top;
+        BOOL moving = sv.isTracking || sv.isDecelerating;
+        if (!_scrollHaveBase || (!hist && !moving)) { _scrollBase = off; _scrollHaveBase = YES; }
+        _scrollD = fabs(off - _scrollBase);
+        if (count == 0 && _scrollD > 8) {
+            CGFloat t = COCClamp01(_scrollD / _cDist);
+            if (t > *target) *target = t;
+            if (moving) *inter = YES;
+        }
+    } else if (count == 0 && hist) {
+        *target = 1;
+    }
 }
 
 - (void)displayTick:(CADisplayLink *)link {
@@ -2181,16 +2210,17 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     if (!_debug) { _dbg.hidden = YES; return; }
     if (!_dbg) {
         _dbg = [[UILabel alloc] init];
-        _dbg.numberOfLines = 2;
+        _dbg.numberOfLines = 3;
         _dbg.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
         _dbg.textColor = [UIColor greenColor];
         _dbg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
         [self addSubview:_dbg];
     }
     _dbg.hidden = NO;
-    _dbg.text = [NSString stringWithFormat:@"cells %ld (lbl %ld)  top %.0f  src %@\nprog %.2f  tgt %.2f  %@",
-                 (long)_cellCount, (long)_labelCount, _topSeen, _src ?: @"-", _prog, _target, _inter ? @"FINGER" : @"spring"];
-    _dbg.frame = CGRectMake(8, 44, MIN(self.bounds.size.width - 16, 260), 30);
+    _dbg.text = [NSString stringWithFormat:@"cells %ld (lbl %ld)  top %.0f  src %@\nprog %.2f  tgt %.2f  %@\nhist %d  scrollD %.0f  %@",
+                 (long)_cellCount, (long)_labelCount, _topSeen, _src ?: @"-", _prog, _target, _inter ? @"FINGER" : @"spring",
+                 _histFlag, _scrollD, _lblNames ?: @""];
+    _dbg.frame = CGRectMake(8, 44, MIN(self.bounds.size.width - 16, 300), 44);
     [self bringSubviewToFront:_dbg];
 }
 

@@ -76,6 +76,7 @@ static void COCInstall(UIView *host) {
     [COCLists addObject:self];
     // Подсказка часам, где искать ячейки уведомлений
     [COCClockView registerListView:self.view];
+    [COCClockView registerListController:self];
 }
 - (void)viewDidLayoutSubviews {
     %orig;
