@@ -30,7 +30,8 @@ static void COCPostChange(void) {
         }
     }
     // Размер часов задаётся на экране блокировки и в списке настроек его нет — сбрасываем отдельно
-    for (NSString *key in @[ @"size", @"width", @"height", @"collapseSize" ]) {
+    for (NSString *key in @[ @"size", @"width", @"height", @"collapseSize", @"widgetList", @"widgetPos",
+                              @"widgetAlarm", @"widgetWeather", @"widgetBattery", @"widgetDate", @"widgetText" ]) {
         CFPreferencesSetAppValue((__bridge CFStringRef)key, NULL, (__bridge CFStringRef)kDomain);
     }
     CFPreferencesAppSynchronize((__bridge CFStringRef)kDomain);

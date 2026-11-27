@@ -53,6 +53,7 @@ static void COCInstall(UIView *host) {
 %hook CSCoverSheetViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
+    [COCClockView registerCoverSheet:self];
     COCPoke();
 }
 %end

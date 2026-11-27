@@ -9,4 +9,6 @@
 + (void)registerListView:(UIView *)view;
 /// Вешает на экран блокировки долгое нажатие, которое открывает редактор размера и положения.
 - (void)installLongPressOn:(UIView *)host;
+/// Передаёт часам контроллер экрана блокировки (чтобы редактор мог отключать автоблокировку).
++ (void)registerCoverSheet:(id)vc;
 @end

@@ -4,6 +4,8 @@
 #import <math.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
 #import "COCClockView.h"
 #import "Prefs.h"
 
@@ -862,6 +864,7 @@ static void COCClockColors(NSInteger idx, BOOL duo, UIColor **hour, UIColor **mi
 #pragma mark - Слежение за уведомлениями (геометрия ячеек на экране)
 
 static __weak UIView *COCListHint;   // вид списка уведомлений (подсказка из Tweak.xm)
+static __weak id COCCoverSheetVC;    // CSCoverSheetViewController (нужен, чтобы не гасить экран в редакторе)
 
 static BOOL COCIsNotifCell(UIView *v) {
     static Class cellCls;
@@ -907,13 +910,30 @@ static BOOL COCPresentedRect(UIView *v, CALayer *root, CGRect *out, CGFloat *alp
     return YES;
 }
 
-static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSMutableArray<UIView *> *out) {
+// Собирает ячейки уведомлений и (если нужен список labels) надписи вроде «Нет прошлых уведомлений»
+static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip,
+                            NSMutableArray<UIView *> *out, NSMutableArray<UIView *> *labels) {
     if (depth > 14) return;
     for (UIView *s in v.subviews) {
         if (--(*budget) <= 0) return;
         if (s == skip || s.hidden) continue;
         if (COCIsNotifCell(s)) { [out addObject:s]; continue; }
-        COCCollectCells(s, depth + 1, budget, skip, out);
+        if (labels) {
+            if ([s isKindOfClass:[UILabel class]]) {
+                NSString *t = ((UILabel *)s).text;
+                if ([t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
+                    [labels addObject:s];
+                }
+                continue;
+            }
+            if ([s isKindOfClass:[UIControl class]]) continue;     // кнопки («Очистить») не считаем
+            const char *n = object_getClassName(s);
+            if (n && (strstr(n, "NoOlder") || strstr(n, "EmptyView") || strstr(n, "EmptyState"))) {
+                [labels addObject:s];
+                continue;
+            }
+        }
+        COCCollectCells(s, depth + 1, budget, skip, out, labels);
     }
 }
 
@@ -955,7 +975,26 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
 - (void)editorResizeCorner:(CGPoint)corner lockRatio:(BOOL)lock;
 - (void)editorReset;
 - (void)endEditingSave:(BOOL)save;
+// Виджеты
+- (NSInteger)editorCardCount;
+- (CGRect)editorCardFrameAtIndex:(NSInteger)i;
+- (void)editorSnapshotCardAtIndex:(NSInteger)i;
+- (void)editorMoveCardAtIndex:(NSInteger)i by:(CGPoint)d;
+- (void)editorRemoveCardAtIndex:(NSInteger)i;
+- (NSArray<NSNumber *> *)editorMissingTypes;
+- (void)editorAddType:(NSInteger)t;
 @end
+
+static NSString *COCWidgetName(NSInteger t) {
+    switch (t) {
+        case 0: return @"Будильник";
+        case 1: return @"Погода";
+        case 2: return @"Батарея";
+        case 3: return @"Дата";
+        case 4: return @"Заметка";
+    }
+    return @"Виджет";
+}
 
 @interface COCEditorView : UIView <UIGestureRecognizerDelegate>
 - (instancetype)initWithClock:(COCClockView *)clock;
@@ -966,10 +1005,16 @@ static void COCCollectCells(UIView *v, int depth, int *budget, UIView *skip, NSM
     __weak COCClockView *_clock;
     UIView *_frameV;
     UIView *_gripV;
-    UIButton *_done, *_cancel, *_reset, *_ratio;
+    UIButton *_done, *_cancel, *_reset, *_ratio, *_add;
     UILabel *_title, *_hint;
+    UIView *_panel;
+    BOOL _panelOpen;
+    CGFloat _panelH;
+    NSMutableArray<UIView *> *_outlines;
+    NSMutableArray<UIButton *> *_badges;
     UIPanGestureRecognizer *_pan;
-    int _mode;                  // 0 — нет, 1 — перенос, 2 — размер
+    int _mode;                  // 0 — нет, 1 — перенос часов, 2 — размер часов, 3 — перенос виджета
+    NSInteger _cardIdx;
     CGPoint _startCorner;
     BOOL _keepRatio;
 }
@@ -993,6 +1038,8 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     if ((self = [super initWithFrame:CGRectZero])) {
         _clock = clock;
         _keepRatio = YES;
+        _outlines = [NSMutableArray array];
+        _badges = [NSMutableArray array];
         self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.30];
         self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
@@ -1005,7 +1052,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         if (@available(iOS 13.0, *)) _frameV.layer.cornerCurve = kCACornerCurveContinuous;
         [self addSubview:_frameV];
 
-        // Уголок для изменения размера — дуга в правом нижнем углу рамки
+        // Уголок для изменения размера часов — дуга в правом нижнем углу рамки
         _gripV = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 40, 40)];
         _gripV.userInteractionEnabled = NO;
         CAShapeLayer *arc = [CAShapeLayer layer];
@@ -1024,22 +1071,28 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
         _cancel = COCPill(@"Отмена", dark, [UIColor whiteColor]);
         _done = COCPill(@"Готово", gold, [UIColor blackColor]);
         _reset = COCPill(@"Сбросить", dark, [UIColor whiteColor]);
-        _ratio = COCPill(@"Пропорции: вкл", dark, [UIColor whiteColor]);
+        _add = COCPill(@"+ Виджет", dark, [UIColor whiteColor]);
+        _ratio = COCPill(@"Пропорции часов: вкл", dark, [UIColor whiteColor]);
         [_cancel addTarget:self action:@selector(onCancel) forControlEvents:UIControlEventTouchUpInside];
         [_done addTarget:self action:@selector(onDone) forControlEvents:UIControlEventTouchUpInside];
         [_reset addTarget:self action:@selector(onReset) forControlEvents:UIControlEventTouchUpInside];
+        [_add addTarget:self action:@selector(onAdd) forControlEvents:UIControlEventTouchUpInside];
         [_ratio addTarget:self action:@selector(onRatio) forControlEvents:UIControlEventTouchUpInside];
-        for (UIButton *b in @[ _cancel, _done, _reset, _ratio ]) [self addSubview:b];
+        for (UIButton *b in @[ _cancel, _done, _reset, _add, _ratio ]) [self addSubview:b];
+
+        _panel = [[UIView alloc] init];
+        _panel.hidden = YES;
+        [self addSubview:_panel];
 
         _title = [[UILabel alloc] init];
-        _title.text = @"Экран блокировки · v0.9.2";
+        _title.text = @"Экран блокировки · v0.10";
         _title.textColor = [UIColor whiteColor];
         _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         [_title sizeToFit];
         [self addSubview:_title];
 
         _hint = [[UILabel alloc] init];
-        _hint.text = @"Тяни рамку — положение, уголок — размер";
+        _hint.text = @"Тяни часы и виджеты, уголок — размер часов";
         _hint.textColor = [UIColor colorWithWhite:1 alpha:0.85];
         _hint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         _hint.textAlignment = NSTextAlignmentCenter;
@@ -1061,16 +1114,39 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     _done.frame = CGRectMake(W - 16 - _done.bounds.size.width, top, _done.bounds.size.width, 36);
     _title.center = CGPointMake(W / 2, top + 18);
 
-    CGFloat by = H - 190;
-    CGFloat gap = 10;
-    CGFloat total = _reset.bounds.size.width + gap + _ratio.bounds.size.width;
+    CGFloat by = H - 215, gap = 10;
+    CGFloat total = _reset.bounds.size.width + gap + _add.bounds.size.width;
     _reset.frame = CGRectMake((W - total) / 2, by, _reset.bounds.size.width, 36);
-    _ratio.frame = CGRectMake(CGRectGetMaxX(_reset.frame) + gap, by, _ratio.bounds.size.width, 36);
-    _hint.frame = CGRectMake(16, by - 30, W - 32, 20);
+    _add.frame = CGRectMake(CGRectGetMaxX(_reset.frame) + gap, by, _add.bounds.size.width, 36);
+    _ratio.frame = CGRectMake((W - _ratio.bounds.size.width) / 2, by + 46, _ratio.bounds.size.width, 36);
+    _hint.frame = CGRectMake(16, by - 28, W - 32, 20);
+    [self layoutPanelWidth:W - 32 bottom:by - 34 left:16];
     [self refresh];
 }
 
-// Рамку и уголок ставим по текущей раскладке часов
+// Панель выбора нового виджета: кнопки типов, которых ещё нет на экране
+- (void)layoutPanelWidth:(CGFloat)w bottom:(CGFloat)bottom left:(CGFloat)left {
+    for (UIView *v in [_panel.subviews copy]) [v removeFromSuperview];
+    NSArray<NSNumber *> *missing = [_clock editorMissingTypes];
+    _add.alpha = missing.count ? 1 : 0.4;
+    if (!_panelOpen || missing.count == 0) { _panel.hidden = YES; return; }
+    UIColor *light = [UIColor colorWithWhite:1 alpha:0.9];
+    CGFloat x = 0, y = 0, rowH = 42;
+    for (NSNumber *t in missing) {
+        UIButton *b = COCPill(COCWidgetName(t.integerValue), light, [UIColor blackColor]);
+        b.tag = t.integerValue;
+        [b addTarget:self action:@selector(onPickType:) forControlEvents:UIControlEventTouchUpInside];
+        if (x + b.bounds.size.width > w && x > 0) { x = 0; y += rowH; }
+        b.frame = CGRectMake(x, y, b.bounds.size.width, 36);
+        x += b.bounds.size.width + 8;
+        [_panel addSubview:b];
+    }
+    _panelH = y + 36;
+    _panel.frame = CGRectMake(left, bottom - _panelH, w, _panelH);
+    _panel.hidden = NO;
+}
+
+// Рамки: вокруг часов, вокруг каждого виджета (с кнопкой «−»), уголок размера
 - (void)refresh {
     COCClockView *c = _clock;
     if (!c) return;
@@ -1078,6 +1154,49 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGRect f = CGRectInset([c editorFrame], -12, -12);
     _frameV.frame = f;
     _gripV.frame = CGRectMake(CGRectGetMaxX(f) - 36, CGRectGetMaxY(f) - 36, 40, 40);
+
+    NSInteger n = [c editorCardCount];
+    while ((NSInteger)_outlines.count < n) {
+        UIView *o = [[UIView alloc] init];
+        o.userInteractionEnabled = NO;
+        o.layer.borderWidth = 1.2;
+        o.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.8].CGColor;
+        [self insertSubview:o aboveSubview:_frameV];
+        [_outlines addObject:o];
+
+        UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+        b.frame = CGRectMake(0, 0, 36, 36);                       // большая зона нажатия
+        UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(6, 6, 24, 24)];
+        dot.userInteractionEnabled = NO;
+        dot.backgroundColor = [UIColor colorWithRed:0.93 green:0.27 blue:0.25 alpha:1];
+        dot.layer.cornerRadius = 12;
+        UILabel *minus = [[UILabel alloc] initWithFrame:dot.bounds];
+        minus.text = @"−";
+        minus.textColor = [UIColor whiteColor];
+        minus.textAlignment = NSTextAlignmentCenter;
+        minus.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+        [dot addSubview:minus];
+        [b addSubview:dot];
+        [b addTarget:self action:@selector(onBadge:) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:b];
+        [_badges addObject:b];
+    }
+    while ((NSInteger)_outlines.count > n) {
+        [_outlines.lastObject removeFromSuperview];
+        [_outlines removeLastObject];
+        [_badges.lastObject removeFromSuperview];
+        [_badges removeLastObject];
+    }
+    for (NSInteger i = 0; i < n; i++) {
+        CGRect cf = [c editorCardFrameAtIndex:i];
+        UIView *o = _outlines[i];
+        o.frame = cf;
+        o.layer.cornerRadius = MIN(18, cf.size.width / 2);
+        UIButton *b = _badges[i];
+        b.tag = i;
+        b.center = CGPointMake(cf.origin.x + 2, cf.origin.y + 2);
+        [self bringSubviewToFront:b];
+    }
 }
 
 - (CGPoint)gripCenter {
@@ -1086,10 +1205,24 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 
 - (void)onCancel { [_clock endEditingSave:NO]; }
 - (void)onDone { [_clock endEditingSave:YES]; }
-- (void)onReset { [_clock editorReset]; [self refresh]; }
+- (void)onReset { [_clock editorReset]; _panelOpen = NO; [self setNeedsLayout]; }
+- (void)onAdd {
+    if (![_clock editorMissingTypes].count) return;
+    _panelOpen = !_panelOpen;
+    [self setNeedsLayout];
+}
+- (void)onPickType:(UIButton *)b {
+    [_clock editorAddType:b.tag];
+    _panelOpen = NO;
+    [self setNeedsLayout];
+}
+- (void)onBadge:(UIButton *)b {
+    [_clock editorRemoveCardAtIndex:b.tag];
+    [self setNeedsLayout];
+}
 - (void)onRatio {
     _keepRatio = !_keepRatio;
-    [_ratio setTitle:_keepRatio ? @"Пропорции: вкл" : @"Пропорции: выкл" forState:UIControlStateNormal];
+    [_ratio setTitle:_keepRatio ? @"Пропорции часов: вкл" : @"Пропорции часов: выкл" forState:UIControlStateNormal];
     [_ratio sizeToFit];
     CGRect r = _ratio.frame; r.size.height = 36; _ratio.frame = r;
     [self setNeedsLayout];
@@ -1106,6 +1239,12 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGPoint s = CGPointMake(p.x - t.x, p.y - t.y);          // где палец лёг
     CGPoint gc = [self gripCenter];
     if (hypot(s.x - gc.x, s.y - gc.y) < 44) { _mode = 2; return YES; }
+    for (NSInteger i = [c editorCardCount] - 1; i >= 0; i--) {
+        if (CGRectContainsPoint(CGRectInset([c editorCardFrameAtIndex:i], -6, -6), s)) {
+            _mode = 3; _cardIdx = i;
+            return YES;
+        }
+    }
     if (CGRectContainsPoint(CGRectInset([c editorDragFrame], -16, -16), s)) { _mode = 1; return YES; }
     _mode = 0;
     return NO;
@@ -1122,13 +1261,18 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGPoint t = [g translationInView:self];
     switch (g.state) {
         case UIGestureRecognizerStateBegan:
-            [c editorSnapshot];
-            _startCorner = CGPointMake(CGRectGetMaxX([c editorFrame]), CGRectGetMaxY([c editorFrame]));
+            if (_mode == 3) {
+                [c editorSnapshotCardAtIndex:_cardIdx];
+            } else {
+                [c editorSnapshot];
+                _startCorner = CGPointMake(CGRectGetMaxX([c editorFrame]), CGRectGetMaxY([c editorFrame]));
+            }
             break;
         case UIGestureRecognizerStateChanged:
             if (_mode == 1) [c editorMoveBy:t];
             else if (_mode == 2) [c editorResizeCorner:CGPointMake(_startCorner.x + t.x, _startCorner.y + t.y)
                                             lockRatio:_keepRatio];
+            else if (_mode == 3) [c editorMoveCardAtIndex:_cardIdx by:t];
             [self refresh];
             break;
         default:
@@ -1153,6 +1297,8 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     UILabel *_dateS;        // малая дата справа (для свёрнутых часов)
     UILabel *_dbg;          // отладочная строка
     NSMutableArray<COCWidgetCard *> *_cards;
+    NSMutableArray<NSNumber *> *_wList;                     // типы виджетов по порядку
+    NSMutableDictionary<NSNumber *, NSValue *> *_wPos;      // тип -> сдвиг (CGPoint) от места по умолчанию
     NSTimer *_timer;
     NSDateFormatter *_fmt;
     UIColor *_tint;
@@ -1160,7 +1306,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGFloat _boost;
 
     // Кэш настроек
-    BOOL _enabled, _use24, _wEn, _wAlarm, _wWeather, _wBat, _wDate, _wTxt, _showWeather;
+    BOOL _enabled, _use24, _wEnPref, _showWeather;
     NSInteger _style, _colorIdx;
     CGFloat _pT, _pL, _pB, _pR;
     CGFloat _size, _w, _h, _op, _ox, _oy;
@@ -1189,6 +1335,12 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     CGFloat _sess[5];        // size, width, height, offsetX, offsetY на момент входа в редактор
     CGFloat _snap[5];        // то же перед текущим жестом
     CGRect _snapFrame;
+    NSArray<NSNumber *> *_sessList;
+    NSDictionary<NSNumber *, NSValue *> *_sessPos;
+    CGPoint _cardSnap;
+    NSTimer *_keepTimer;
+    CFTimeInterval _editStart;
+    NSInteger _labelCount;
 }
 
 + (void)registerListView:(UIView *)view {
@@ -1234,6 +1386,8 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_timer invalidate];
     [_link invalidate];
+    [_keepTimer invalidate];
+    [self setKeepAwake:NO];
     [_lp.view removeGestureRecognizer:_lp];
 }
 
@@ -1308,12 +1462,8 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     }
     _op   = COCF(@"clockOpacity", 100);
 
-    _wEn      = COCB(@"widgetsEnabled", YES);
-    _wAlarm   = COCB(@"widgetAlarm", YES);
-    _wWeather = COCB(@"widgetWeather", YES);
-    _wBat     = COCB(@"widgetBattery", NO);
-    _wDate    = COCB(@"widgetDate", NO);
-    _wTxt     = COCB(@"widgetText", NO);
+    _wEnPref  = COCB(@"widgetsEnabled", YES);
+    if (!_editing) [self loadWidgetList];
     _txt      = COCS(@"widgetTextValue", @"ColorOS");
     _wOp      = COCF(@"widgetOpacity", 20);
     _wRad     = COCF(@"widgetRadius", 18);
@@ -1334,25 +1484,66 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 
     [self updateColors];
 
-    // Перестраиваем виджеты (порядок: будильник, погода, батарея, дата, заметка)
+    [self rebuildCards];
+
+    [self refreshContent];
+    [self setNeedsLayout];
+    [self syncLink];
+}
+
+#pragma mark Виджеты (список и положение хранятся в настройках)
+
+static id COCCopyPref(NSString *key) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)COC_DOMAIN);
+    return CFBridgingRelease(v);
+}
+
+- (void)loadWidgetList {
+    NSArray *list = COCCopyPref(@"widgetList");
+    NSMutableArray<NSNumber *> *out = [NSMutableArray array];
+    if ([list isKindOfClass:[NSArray class]]) {
+        for (id o in list) {
+            if (![o isKindOfClass:[NSNumber class]]) continue;
+            NSInteger t = [o integerValue];
+            if (t < 0 || t > 4) continue;
+            if (![out containsObject:@(t)]) [out addObject:@(t)];
+        }
+    } else {
+        // Список ещё не задавался — берём прежние переключатели (будильник и погода включены по умолчанию)
+        BOOL on[5] = { COCB(@"widgetAlarm", YES), COCB(@"widgetWeather", YES), COCB(@"widgetBattery", NO),
+                       COCB(@"widgetDate", NO), COCB(@"widgetText", NO) };
+        for (NSInteger i = 0; i < 5; i++) if (on[i]) [out addObject:@(i)];
+    }
+    _wList = out;
+
+    NSDictionary *pos = COCCopyPref(@"widgetPos");
+    NSMutableDictionary<NSNumber *, NSValue *> *pm = [NSMutableDictionary dictionary];
+    if ([pos isKindOfClass:[NSDictionary class]]) {
+        for (id k in pos) {
+            NSArray *a = pos[k];
+            if (![a isKindOfClass:[NSArray class]] || a.count != 2) continue;
+            pm[@([k integerValue])] = [NSValue valueWithCGPoint:CGPointMake([a[0] doubleValue], [a[1] doubleValue])];
+        }
+    }
+    _wPos = pm;
+}
+
+- (void)rebuildCards {
     for (COCWidgetCard *c in _cards) [c removeFromSuperview];
     [_cards removeAllObjects];
-    if (_wEn) {
-        BOOL on[5] = { _wAlarm, _wWeather, _wBat, _wDate, _wTxt };
-        for (NSInteger i = 0; i < 5; i++) {
-            if (!on[i]) continue;
+    if (_wEnPref || _editing) {
+        for (NSNumber *t in _wList) {
             COCWidgetCard *card = [[COCWidgetCard alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
-            card.tag = i;
+            card.tag = t.integerValue;
             card.fillAlpha = _wOp / 100.0 * 0.5;
             if (@available(iOS 13.0, *)) card.layer.cornerCurve = kCACornerCurveContinuous;
             [self addSubview:card];
             [_cards addObject:card];
         }
     }
-
+    if (_dbg) [self bringSubviewToFront:_dbg];
     [self refreshContent];
     [self setNeedsLayout];
-    [self syncLink];
 }
 
 #pragma mark Содержимое
@@ -1386,7 +1577,7 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     _minsV.text = m;
 
     // Погода
-    if (_showWeather || _wWeather) COCWeatherRefresh(_city);
+    if (_showWeather || [_wList containsObject:@(COCWidgetWeather)]) COCWeatherRefresh(_city);
     BOOL showW = _showWeather && COCWValid;
 
     // Дата / погода рядом с часами
@@ -1544,6 +1735,12 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
     for (NSInteger i = 0; i < n; i++) {
         COCWidgetCard *c = _cards[i];
         CGRect r = f.card[i];
+        NSValue *ov = _wPos[@(c.tag)];
+        if (ov) {                                   // свой сдвиг виджета; в малых часах возвращаются на место
+            CGPoint o = ov.CGPointValue;
+            r.origin.x += o.x * (1 - p);
+            r.origin.y += o.y * (1 - p);
+        }
         c.frame = r;
         CGFloat sc = _E.sq > 0 ? r.size.width / _E.sq : 1;
         c.layer.cornerRadius = MIN(_wRad * ws * sc, r.size.width / 2.0);
@@ -1560,9 +1757,10 @@ static UIButton *COCPill(NSString *title, UIColor *bg, UIColor *fg) {
 
 #pragma mark Редактор (долгое нажатие)
 
-static void COCSetPref(NSString *key, double v) {
-    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFTypeRef)@(v), (__bridge CFStringRef)COC_DOMAIN);
+static void COCSetPrefObj(NSString *key, id v) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)v, (__bridge CFStringRef)COC_DOMAIN);
 }
+static void COCSetPref(NSString *key, double v) { COCSetPrefObj(key, @(v)); }
 
 // Отменяем уже начатые долгие нажатия системы (на iOS 16+ это вход в смену обоев)
 static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int depth, int *budget) {
@@ -1631,7 +1829,12 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
     UIView *host = self.superview;
     if (!host || _editing) return;
     _editing = YES;
+    _editStart = CACurrentMediaTime();
     _sess[0] = _size; _sess[1] = _w; _sess[2] = _h; _sess[3] = _ox; _sess[4] = _oy;
+    _sessList = [_wList copy];
+    _sessPos = [_wPos copy];
+    [self rebuildCards];            // в редакторе виджеты видны, даже если выключены в настройках
+    [self setKeepAwake:YES];
 
     _editor = [[COCEditorView alloc] initWithClock:self];
     _editor.frame = host.bounds;
@@ -1653,11 +1856,26 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         COCSetPref(@"height", _h);
         COCSetPref(@"offsetX", _ox);
         COCSetPref(@"offsetY", _oy);
+        COCSetPrefObj(@"widgetList", [_wList copy]);
+        NSMutableDictionary *pd = [NSMutableDictionary dictionary];
+        for (NSNumber *k in _wPos) {
+            CGPoint pt = _wPos[k].CGPointValue;
+            pd[k.stringValue] = @[ @(pt.x), @(pt.y) ];
+        }
+        COCSetPrefObj(@"widgetPos", pd);
+        if (!_wEnPref && _wList.count > 0) {
+            _wEnPref = YES;
+            COCSetPrefObj(@"widgetsEnabled", @YES);
+        }
         CFPreferencesAppSynchronize((__bridge CFStringRef)COC_DOMAIN);
     } else {
         _size = _sess[0]; _w = _sess[1]; _h = _sess[2]; _ox = _sess[3]; _oy = _sess[4];
+        _wList = [_sessList mutableCopy] ?: [NSMutableArray array];
+        _wPos = [_sessPos mutableCopy] ?: [NSMutableDictionary dictionary];
     }
     _editing = NO;
+    [self setKeepAwake:NO];
+    [self rebuildCards];
     COCEditorView *e = _editor;
     _editor = nil;
     [UIView animateWithDuration:0.2 animations:^{ e.alpha = 0; } completion:^(BOOL f) { [e removeFromSuperview]; }];
@@ -1711,8 +1929,101 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
 
 - (void)editorReset {
     _size = 100; _w = 100; _h = 100; _ox = 0; _oy = 0;
+    _wList = [@[ @0, @1 ] mutableCopy];
+    _wPos = [NSMutableDictionary dictionary];
+    [self rebuildCards];
     [self setNeedsLayout];
     [self layoutIfNeeded];
+}
+
+#pragma mark Редактор: виджеты
+
+- (NSInteger)editorCardCount { return (NSInteger)_cards.count; }
+
+- (CGRect)editorCardFrameAtIndex:(NSInteger)i {
+    [self layoutIfNeeded];
+    return (i >= 0 && i < (NSInteger)_cards.count) ? _cards[i].frame : CGRectZero;
+}
+
+- (void)editorSnapshotCardAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_cards.count) return;
+    NSValue *v = _wPos[@(_cards[i].tag)];
+    _cardSnap = v ? v.CGPointValue : CGPointZero;
+}
+
+- (void)editorMoveCardAtIndex:(NSInteger)i by:(CGPoint)d {
+    if (i < 0 || i >= (NSInteger)_cards.count || i >= COC_MAXW) return;
+    CGRect b = _E.card[i];                                  // место по умолчанию (развёрнутый вид)
+    CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
+    CGFloat ox = _cardSnap.x + d.x, oy = _cardSnap.y + d.y;
+    ox = MAX(-b.origin.x, MIN(W - b.size.width - b.origin.x, ox));
+    oy = MAX(-b.origin.y, MIN(H - b.size.height - b.origin.y, oy));
+    _wPos[@(_cards[i].tag)] = [NSValue valueWithCGPoint:CGPointMake(ox, oy)];
+    [self applyProgress:_prog];
+}
+
+- (void)editorRemoveCardAtIndex:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)_cards.count) return;
+    NSNumber *t = @(_cards[i].tag);
+    [_wList removeObject:t];
+    [_wPos removeObjectForKey:t];
+    [self rebuildCards];
+}
+
+- (NSArray<NSNumber *> *)editorMissingTypes {
+    NSMutableArray<NSNumber *> *m = [NSMutableArray array];
+    for (NSInteger t = 0; t < 5; t++) if (![_wList containsObject:@(t)]) [m addObject:@(t)];
+    return m;
+}
+
+- (void)editorAddType:(NSInteger)t {
+    if (t < 0 || t > 4 || [_wList containsObject:@(t)]) return;
+    [_wList addObject:@(t)];
+    [self rebuildCards];
+}
+
+#pragma mark Редактор: экран не должен гаснуть
+
++ (void)registerCoverSheet:(id)vc {
+    COCCoverSheetVC = vc;
+}
+
+- (id)idleController {
+    id vc = COCCoverSheetVC;
+    SEL s = NSSelectorFromString(@"idleTimerController");
+    return (vc && [vc respondsToSelector:s]) ? [vc performSelector:s] : nil;
+}
+
+- (void)setKeepAwake:(BOOL)on {
+    id ctl = [self idleController];
+    NSString *reason = @"com.coloros.clocktweak.editor";
+    if (on) {
+        SEL add = NSSelectorFromString(@"addIdleTimerDisabledAssertionReason:");
+        if (ctl && [ctl respondsToSelector:add]) [ctl performSelector:add withObject:reason];
+        [_keepTimer invalidate];
+        _keepTimer = [NSTimer scheduledTimerWithTimeInterval:2.5 target:self selector:@selector(keepAwakeTick)
+                                                    userInfo:nil repeats:YES];
+        [self keepAwakeTick];
+    } else {
+        [_keepTimer invalidate];
+        _keepTimer = nil;
+        SEL rem = NSSelectorFromString(@"removeIdleTimerDisabledAssertionReason:");
+        if (ctl && [ctl respondsToSelector:rem]) [ctl performSelector:rem withObject:reason];
+    }
+}
+
+// Дополнительно «подталкиваем» таймер бездействия, а если редактор забыли открытым — через 10 минут выходим
+- (void)keepAwakeTick {
+    if (!_editing) { [self setKeepAwake:NO]; return; }
+    if (CACurrentMediaTime() - _editStart > 600) { [self endEditingSave:NO]; return; }
+    id ctl = [self idleController];
+    SEL reset = NSSelectorFromString(@"resetIdleTimerIfTopMost");
+    if (ctl && [ctl respondsToSelector:reset]) [ctl performSelector:reset];
+    Class bc = NSClassFromString(@"SBBacklightController");
+    SEL shared = NSSelectorFromString(@"sharedInstance");
+    id sh = (bc && [bc respondsToSelector:shared]) ? [bc performSelector:shared] : nil;
+    SEL r2 = NSSelectorFromString(@"resetLockScreenIdleTimer");
+    if (sh && [sh respondsToSelector:r2]) [sh performSelector:r2];
 }
 
 #pragma mark Привод анимации
@@ -1756,12 +2067,14 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
 
     UIView *hint = COCListHint;
     NSArray<UIView *> *cells;
+    NSMutableArray<UIView *> *labs = nil;
     CFTimeInterval now = CACurrentMediaTime();
     if (hint && hint.window == win) {
         NSMutableArray *found = [NSMutableArray array];
+        labs = [NSMutableArray array];
         int budget = 600;
         if (COCIsNotifCell(hint)) [found addObject:hint];
-        else COCCollectCells(hint, 0, &budget, self, found);
+        else COCCollectCells(hint, 0, &budget, self, found, labs);
         cells = found;
         _src = @"list";
     } else {
@@ -1771,7 +2084,7 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
             _lastScan = now;
             NSMutableArray *found = [NSMutableArray array];
             int budget = 2500;
-            COCCollectCells(win, 0, &budget, self, found);
+            COCCollectCells(win, 0, &budget, self, found, nil);
             _cells = found;
         }
         cells = _cells;
@@ -1794,6 +2107,25 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         UIScrollView *sv = (UIScrollView *)p;
         if (sv && (sv.isTracking || sv.isDragging || sv.isDecelerating)) *inter = YES;
     }
+    // Нет ячеек, но на экране есть надпись списка («Нет прошлых уведомлений») — тоже считаем «уведомлениями»
+    NSInteger lcount = 0;
+    if (count == 0) {
+        for (UIView *l in labs) {
+            if (!l.window) continue;
+            CGRect r; CGFloat a;
+            if (!COCPresentedRect(l, win.layer, &r, &a)) continue;
+            if (a < 0.05 || r.size.height < 8 || r.size.width < 8) continue;
+            if (r.origin.y >= H - 1 || CGRectGetMaxY(r) <= 0) continue;
+            lcount++;
+            if (r.origin.y < top) top = r.origin.y;
+            UIView *p = l.superview;
+            while (p && ![p isKindOfClass:[UIScrollView class]]) p = p.superview;
+            UIScrollView *sv = (UIScrollView *)p;
+            if (sv && (sv.isTracking || sv.isDragging || sv.isDecelerating)) *inter = YES;
+        }
+        count = lcount;
+    }
+    _labelCount = lcount;
     _cellCount = count;
     _topSeen = (count > 0) ? top : -1;
     if (count > 0) *target = COCCollapseTarget(top, H, _cDist);
@@ -1856,8 +2188,8 @@ static void COCCancelLongPresses(UIView *v, UIGestureRecognizer *except, int dep
         [self addSubview:_dbg];
     }
     _dbg.hidden = NO;
-    _dbg.text = [NSString stringWithFormat:@"cells %ld  top %.0f  src %@\nprog %.2f  tgt %.2f  %@",
-                 (long)_cellCount, _topSeen, _src ?: @"-", _prog, _target, _inter ? @"FINGER" : @"spring"];
+    _dbg.text = [NSString stringWithFormat:@"cells %ld (lbl %ld)  top %.0f  src %@\nprog %.2f  tgt %.2f  %@",
+                 (long)_cellCount, (long)_labelCount, _topSeen, _src ?: @"-", _prog, _target, _inter ? @"FINGER" : @"spring"];
     _dbg.frame = CGRectMake(8, 44, MIN(self.bounds.size.width - 16, 260), 30);
     [self bringSubviewToFront:_dbg];
 }

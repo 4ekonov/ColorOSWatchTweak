@@ -8,9 +8,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Размер и положение часов: долгое нажатие на самих часах на экране блокировки → тяни рамку (положение) и уголок (размер).</string>
+			<string>Часы и виджеты: долгое нажатие на самих часах на экране блокировки → тяни часы и виджеты, уголок — размер часов.</string>
 			<key>label</key>
-			<string>Основное · v0.9.2</string>
+			<string>Основное · v0.10.0</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -473,6 +473,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>Какие виджеты показывать, где они стоят и сколько их — меняется на экране блокировки: долгое нажатие на часах → «+ Виджет», красный «−» на виджете, перетаскивание.</string>
 			<key>label</key>
 			<string>Виджеты</string>
 		</dict>
@@ -489,76 +491,6 @@
 			<string>widgetsEnabled</string>
 			<key>label</key>
 			<string>Показывать виджеты</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>widgetAlarm</string>
-			<key>label</key>
-			<string>Виджет «Будильник»</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>widgetWeather</string>
-			<key>label</key>
-			<string>Виджет «Погода»</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>widgetBattery</string>
-			<key>label</key>
-			<string>Виджет «Батарея»</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>widgetDate</string>
-			<key>label</key>
-			<string>Виджет «Дата»</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.coloros.clocktweak/prefsChanged</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.coloros.clocktweak</string>
-			<key>key</key>
-			<string>widgetText</string>
-			<key>label</key>
-			<string>Виджет «Заметка»</string>
 		</dict>
 		<dict>
 			<key>cell</key>
